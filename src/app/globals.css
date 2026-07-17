@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0c0d0e; /* Warm Stone Charcoal - No blue tint */
+  --foreground: #f4f4f5; /* Warm off-white */
+  
+  --emerald-primary: #10b981; /* Emerald Green */
+  --terracotta-accent: #f97316; /* Terracotta Orange */
+  
+  --card-bg: #16181b; /* Deep Stone Card - No blue tint */
+  --card-border: #282a2d; /* Slate Stone Border */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  
+  /* Custom Palette variables - strictly pure grey/stone/charcoal, no blues */
+  --color-charcoal-dark: #0c0d0e;
+  --color-slate-card: #16181b;
+  --color-slate-border: #282a2d;
+  
+  --color-emerald-primary: #10b981;
+  --color-terracotta: #f97316;
+  --color-amber-glow: #f59e0b;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0c0d0e;
+}
+::-webkit-scrollbar-thumb {
+  background: #282a2d;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #10b981;
+}

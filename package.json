@@ -1,0 +1,35 @@
+{
+  "name": "mess-mesh",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js",
+    "build": "next build",
+    "start": "node server.js",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.10.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "lucide-react": "^1.24.0",
+    "mongoose": "^9.7.4",
+    "next": "15.5.20",
+    "next-auth": "^4.24.14",
+    "papaparse": "^5.5.4",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-hot-toast": "^2.6.0",
+    "recharts": "^3.9.2",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.20",
+    "tailwindcss": "^4"
+  }
+}
