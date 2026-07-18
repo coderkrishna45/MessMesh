@@ -1,3 +1,5 @@
+LIVE LINK : https://messmesh.onrender.com/login
+use credentials - Roll- 123456  password - 123456@Mess2026
 # MessMesh: Smart Hostel Mess Management Web App
 
 MessMesh is a fullstack hostel mess management system designed to optimize meal planning, minimize plate waste, and introduce democratic meal curation. Built with plain JavaScript on Next.js 15 (App Router), it incorporates real-time analytics, Socket.io, and a moving-average forecaster to help wardens make data-driven decisions while incentivizing students to maintain clean plates.
