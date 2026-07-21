@@ -6,7 +6,9 @@
     "dev": "node server.js",
     "build": "next build",
     "start": "node server.js",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check-db": "node scripts/check-db.js",
+    "seed": "node scripts/seed-once.js"
   },
   "dependencies": {
     "@eslint/eslintrc": "^3",

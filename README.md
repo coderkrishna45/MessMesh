@@ -1,86 +1,204 @@
-LIVE LINK : https://messmesh.onrender.com/login
-use credentials - Roll- 123456  password - 123456@Mess2026
-# MessMesh: Smart Hostel Mess Management Web App
+# MessMesh
 
-MessMesh is a fullstack hostel mess management system designed to optimize meal planning, minimize plate waste, and introduce democratic meal curation. Built with plain JavaScript on Next.js 15 (App Router), it incorporates real-time analytics, Socket.io, and a moving-average forecaster to help wardens make data-driven decisions while incentivizing students to maintain clean plates.
+**Smart hostel mess management** — meal ratings, plate-waste logging, wing leaderboards, Sunday Premium Feast unlocks, and warden analytics with weekly PDF reports.
 
----
+Built with **Next.js 15** (App Router, JavaScript), **MongoDB + Mongoose**, **NextAuth**, **Socket.io**, **Recharts**, and **Tailwind CSS v4**.
 
-## 🛠️ Technology Stack
+| | |
+|--|--|
+| **Live demo** | [https://messmesh.onrender.com/login](https://messmesh.onrender.com/login) |
+| **Repository** | [github.com/coderkrishna45/MessMesh](https://github.com/coderkrishna45/MessMesh) |
 
-* **Frontend & Backend**: Next.js 15 (App Router, Plain JavaScript)
-* **Real-time Sync**: Socket.io (WebSocket dev-server integration)
-* **Database**: MongoDB Atlas + Mongoose ODM
-* **Authentication**: NextAuth.js (Credentials Provider + email fallbacks)
-* **Visualizations**: Recharts (Dynamic Client-side line/bar charts)
-* **Image Uploader**: Cloudinary preset API
-* **Styling**: Vanilla CSS + Tailwind CSS v4 (Zero Blue Tint: Warm Charcoal & Emerald Green palette)
+### Live demo login
 
----
+| Field | Value |
+|-------|--------|
+| Roll number | `123456` |
+| Password | `123456@Mess2026` |
 
-## ✨ Features
-
-1. **🔐 Single-Tap Login Simulator**: Click-to-login dashboard bypass cards on `/login` that pre-fill credentials for fast role testing.
-2. **⭐ Rate Today's Meals / Monitor Ratings**:
-   * **Students**: Submit 1-5 star reviews on the taste of today's dishes in real-time. Updates averages on client screens via Socket.io.
-   * **Wardens**: Dynamic read-only monitor interface tracking overall ratings and reviews.
-3. **📅 Rating History Matrix (Student)**: A responsive weekly grid (Breakfast, Lunch, Snacks, Dinner rows vs Monday-Sunday columns) that lists student reviews for the current week, 1 week ago, and 2 weeks ago.
-4. **🗑️ Waste Logging (Student)**: Plate waste audits (1-5 slider with matching emojis: 😋 to 😣) and optional photo uploads. Zero-waste audits improve their Wing's standings.
-5. **👑 Group Incentive: Sunday Premium Feast Wing Eligibility**:
-   * **Cooperative Goal**: A Wing's average Clean Plate Score must be **90+** by Sunday to unlock the **Premium Sunday Feast** menu upgrade for everyone in that Wing.
-   * **Warden View**: Renders the **Sunday Premium Feast Wing Eligibility** card list on the Admin Dashboard (`/admin`), tracking average scores for each wing and displaying `Unlocked` or `Locked` badges.
-   * **Student View**: Renders status indicators under each Wing Standing card on the **Leaderboard** page (`/leaderboard`), showing students how many points their wing needs to unlock the premium feast.
-6. **🏆 Wing Standings Leaderboard**: Ranks Wings (A, B, C, D) by average Clean Plate Scores, displaying crown decorations and progress meters.
-7. **📊 Warden Admin Analytics**:
-   * **Prophet JS Forecaster**: A weighted moving average waste forecaster that analyzes past leftovers to suggest portion sizes.
-   * **Recharts Visualizations**: Interactive daily leftover trends (LineChart) and wing waste distributions (BarChart).
-   * **Menu Auto-Generation Algorithm**: Curation script that compiles next week's schedule using top-voted student preferred dishes, archives current polls, and opens clean weekly polls.
+*(After first login, the app may ask you to set a new password.)*
 
 ---
 
-## 🚀 Setup Instructions
+## Features
 
-### 1. Environment Variables (`.env`)
-Create a `.env` file in the root directory:
-```env
-MONGODB_URI="your-mongodb-atlas-connection-string"
-NEXTAUTH_SECRET="your-nextauth-secret-key"
-NEXTAUTH_URL="http://localhost:3000"
+| Area | What it does |
+|------|----------------|
+| **Auth** | Credentials login (email **or** roll number). Force password change on first login / after warden reset. |
+| **Rate meals** | Students rate today’s dishes (1–5★). Real-time averages via Socket.io. Wardens monitor read-only. |
+| **Rating history** | Student week matrix (current / last week / 2 weeks ago). |
+| **Log waste** | Plate waste 1–5 + optional Cloudinary photo. Updates Clean Plate Score. |
+| **Leaderboard** | Wing + individual standings; Sunday Feast lock/unlock badges (avg ≥ 90). |
+| **Warden analytics** | Metrics, waste charts, Prophet-style forecast, menu generate/publish, feast unlock. |
+| **Weekly PDF** | Download professional weekly report (leaderboard, top/bottom dishes, waste, forecast). |
+| **Manage students** | Manual add + CSV bulk upload (PapaParse), roster table, password reset. |
+| **Notifications** | Bell panel + toasts (feast unlock, high waste, date advanced). |
+| **Date simulator** | “Next Day” advances simulated hostel date and auto-logs sample activity. |
 
-# Optional Cloudinary (Defaults to mock fallback upload if omitted)
-NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME="your-cloudinary-cloud-name"
+---
+
+## Quick start (local)
+
+### Important: one server only
+
+`npm run dev` **already runs** `node server.js` (Next + Socket.io on port **3000**).
+
+| Do this | Do **not** do this |
+|---------|---------------------|
+| One terminal → `npm run dev` | Run both `npm run dev` **and** `node server.js` |
+
+Running both causes: **`EADDRINUSE: port 3000 already in use`**.
+
+Free a stuck port (PowerShell):
+
+```powershell
+Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 ```
 
-### 2. Install Dependencies
+### 1. Clone & install
+
 ```bash
+git clone https://github.com/coderkrishna45/MessMesh.git
+cd MessMesh
 npm install
 ```
 
-### 3. Initialize & Seed Database
-Start the Next.js server first:
+### 2. Environment
+
 ```bash
-node server.js
+copy .env.example .env.local
 ```
-Then, execute the seeder endpoint to populate users, dishes, daily menus, and historical waste logs:
-* **PowerShell**:
-  ```powershell
-  Invoke-RestMethod -Uri "http://localhost:3000/api/seed"
-  ```
-* **Browser**: Open `http://localhost:3000/api/seed` in your browser.
+
+Minimum in `.env.local`:
+
+```env
+MONGODB_URI="mongodb+srv://USER:PASS@CLUSTER/messmesh?retryWrites=true&w=majority"
+NEXTAUTH_SECRET="any-long-random-string"
+NEXTAUTH_URL="http://localhost:3000"
+```
+
+Optional (waste photo uploads; otherwise a placeholder image is used):
+
+```env
+NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME="your-cloud-name"
+NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET="messmesh_waste"
+```
+
+See **`.env.example`** and **`DEPLOY.md`** for production variables.
+
+### 3. Run the app
+
+```bash
+npm run dev
+```
+
+Open **http://localhost:3000**
+
+### 4. Seed demo data (optional)
+
+With the server **already running**:
+
+```bash
+npm run seed
+```
+
+Or visit **http://localhost:3000/api/seed** once (local dev).
+
+Check DB without starting the app:
+
+```bash
+npm run check-db
+```
 
 ---
 
-## 🧪 How to Test
+## Demo accounts (after local seed)
 
-### 1. The Student Flow
-1. Go to `http://localhost:3000/login` and click **Alice Smith (Student)** under the Quick Login panel.
-2. In the **Leaderboard** (`/leaderboard`) view:
-   * Look at the **Wing Standings** cards. 
-   * A-Wing (average `88`) shows: `🔒 LOCKED - Sunday Feast (Need +2 pts)`.
-   * C-Wing (average `92`) shows: `🎉 UNLOCKED - Sunday Feast`.
-3. Submit plate audits in **Log Waste** (`/waste-log`) to increase A-Wing's standings.
+| Role | Login | Password |
+|------|--------|----------|
+| Warden (A-Wing) | `warden1@messmesh.com` | `warden123` |
+| Warden (B-Wing) | `warden2@messmesh.com` | `warden123` |
+| Student | `student1@messmesh.com` | `student123` |
+| Student | `student3@messmesh.com` | `student123` |
 
-### 2. The Warden Flow
-1. Log out, go to `/login`, and tap **Warden Susan**.
-2. Go to **Analytics** (`/admin`).
-3. Under the **Sunday Premium Feast Wing Eligibility** card list, verify which Wings have successfully unlocked their premium menu upgrade.
+On local `/login`, use the **Developer Tool** quick-login cards (shown only in development builds).
+
+---
+
+## npm scripts
+
+| Script | Purpose |
+|--------|---------|
+| `npm run dev` | Start custom server + Socket.io (development) |
+| `npm run build` | Production Next.js build |
+| `npm start` | Start server after build |
+| `npm run seed` | Call `/api/seed` (server must be running) |
+| `npm run check-db` | Test MongoDB connection from `.env.local` |
+| `npm run lint` | ESLint |
+
+---
+
+## Project structure (high level)
+
+```
+MessMesh/
+├── server.js                 # Custom HTTP + Socket.io server
+├── scripts/
+│   ├── check-db.js           # DB connectivity check
+│   └── seed-once.js          # One-shot seed HTTP client
+├── src/
+│   ├── app/                  # App Router pages + API routes
+│   │   ├── login/
+│   │   ├── dashboard/
+│   │   ├── vote/
+│   │   ├── waste-log/
+│   │   ├── leaderboard/
+│   │   ├── admin/            # Warden analytics
+│   │   ├── warden/manage-students/
+│   │   └── api/              # REST + seed endpoints
+│   ├── components/           # Navbar, Footer, ForcePasswordChange
+│   └── lib/                  # auth, db, models, PDF report
+├── .env.example
+├── DEPLOY.md                 # Production / hosting checklist
+└── README.md
+```
+
+---
+
+## College demo walkthrough
+
+1. Open live site or run `npm run dev` locally  
+2. Log in (live credentials above, or local quick-login)  
+3. **Dashboard** → Download Weekly Report (warden)  
+4. **Students** → add a student or show CSV upload  
+5. **Analytics** → charts, forecast, feast panel  
+6. As student → rate meals, log waste, leaderboard  
+7. Optional: **Next Day** in the navbar to advance simulation  
+
+---
+
+## Tech stack
+
+- **Next.js 15** App Router (JavaScript)
+- **MongoDB** + **Mongoose**
+- **NextAuth.js** (credentials; Google optional via env)
+- **Socket.io** (real-time ratings & notifications)
+- **Recharts**, **jsPDF**, **PapaParse**, **Cloudinary**, **Tailwind CSS v4**
+
+---
+
+## Deploy
+
+This app uses a **custom Node server** for Socket.io. Prefer **Railway / Render / Fly** (long-running process), not pure Vercel serverless.
+
+Current production host: **[Render](https://messmesh.onrender.com/login)**
+
+Full production checklist: **[DEPLOY.md](./DEPLOY.md)**
+
+---
+
+## Team
+
+College team project — MessMesh (hostel mess intelligence).
+
+For issues or setup help, open an issue on the GitHub repo or follow `DEPLOY.md`.

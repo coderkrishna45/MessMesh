@@ -2,16 +2,23 @@ const { createServer } = require('http');
 const { parse } = require('url');
 const next = require('next');
 const { Server } = require('socket.io');
+const { loadEnvConfig } = require('@next/env');
+
+// Load .env / .env.local before reading PORT / secrets (required for custom server)
+loadEnvConfig(process.cwd());
 
 const dev = process.env.NODE_ENV !== 'production';
-// 0.0.0.0 so Railway/Render/Docker can accept external traffic.
-// Override with HOSTNAME=localhost for local-only binding if needed.
-const hostname = process.env.HOSTNAME || '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000', 10);
-const app = next({ dev, hostname, port });
+
+// Next.js hostname is used for asset/HMR URLs — keep browser-reachable (localhost).
+// Listen host can be 0.0.0.0 so other devices / cloud hosts can connect.
+const nextHostname = process.env.NEXT_HOSTNAME || 'localhost';
+const listenHost = process.env.HOSTNAME || (dev ? 'localhost' : '0.0.0.0');
+
+const app = next({ dev, hostname: nextHostname, port });
 const handle = app.getRequestHandler();
 
-/** Allowed browser origins for Socket.io (comma-separated) */
+/** Allowed browser origins for Socket.io (comma-separated extras via SOCKET_CORS_ORIGIN) */
 function getAllowedOrigins() {
   const list = new Set();
   if (process.env.NEXTAUTH_URL) {
@@ -30,6 +37,25 @@ function getAllowedOrigins() {
   return [...list];
 }
 
+function printPortInUseHelp() {
+  console.error('');
+  console.error(`  Port ${port} is already in use.`);
+  console.error('');
+  console.error('  MessMesh only needs ONE server process.');
+  console.error('  "npm run dev" already runs node server.js — do not run both.');
+  console.error('');
+  console.error('  Correct start (single terminal):');
+  console.error('    npm run dev');
+  console.error('');
+  console.error('  Then open:  http://localhost:' + port);
+  console.error('');
+  console.error('  Free the port in PowerShell if a ghost process is stuck:');
+  console.error(
+    `    Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`
+  );
+  console.error('');
+}
+
 app.prepare().then(() => {
   const httpServer = createServer((req, res) => {
     const parsedUrl = parse(req.url, true);
@@ -41,10 +67,8 @@ app.prepare().then(() => {
   const io = new Server(httpServer, {
     cors: {
       origin: (origin, callback) => {
-        // Allow non-browser clients (no Origin header) and same-origin tools
         if (!origin) return callback(null, true);
         if (allowedOrigins.length === 0) {
-          // Misconfigured prod: fail closed unless still in dev
           return callback(null, dev);
         }
         if (allowedOrigins.includes(origin.replace(/\/$/, ''))) {
@@ -56,7 +80,6 @@ app.prepare().then(() => {
     },
   });
 
-  // Store the io instance so Next.js API routes can emit events
   global.io = io;
 
   io.on('connection', (socket) => {
@@ -64,7 +87,6 @@ app.prepare().then(() => {
 
     socket.on('join-poll', (pollId) => {
       socket.join(pollId);
-      if (dev) console.log(`[Socket] Client ${socket.id} joined poll room: ${pollId}`);
     });
 
     socket.on('cast-vote', (data) => {
@@ -78,11 +100,24 @@ app.prepare().then(() => {
     });
   });
 
-  httpServer.listen(port, hostname, (err) => {
-    if (err) throw err;
-    console.log(`> Ready on http://${hostname}:${port} (${dev ? 'dev' : 'production'})`);
-    if (allowedOrigins.length) {
-      console.log(`> Socket CORS origins: ${allowedOrigins.join(', ')}`);
+  httpServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      printPortInUseHelp();
+      process.exit(1);
     }
+    console.error(err);
+    process.exit(1);
+  });
+
+  httpServer.listen(port, listenHost, () => {
+    console.log('');
+    console.log(`  MessMesh ready  →  http://localhost:${port}`);
+    console.log(`  Mode: ${dev ? 'development' : 'production'}  |  bind: ${listenHost}:${port}`);
+    if (allowedOrigins.length) {
+      console.log(`  Socket CORS: ${allowedOrigins.join(', ')}`);
+    }
+    console.log('');
+    console.log('  Tip: use only "npm run dev" (one terminal). Do not also run node server.js.');
+    console.log('');
   });
 });
