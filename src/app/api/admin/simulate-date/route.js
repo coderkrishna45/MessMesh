@@ -6,6 +6,11 @@ import Dish from '@/lib/models/Dish';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
 import MealRating from '@/lib/models/MealRating';
 import WasteLog from '@/lib/models/WasteLog';
+import { maybeResetScoresOnWeekRollover } from '@/lib/weeklyScoreReset';
+import { ensureWeeklyMenu } from '@/lib/ensureWeeklyMenu';
+import { requireRoles } from '@/lib/authorization';
+import { demoMutationResponse } from '@/lib/demoLimits';
+import { socketEventRoom } from '@/lib/accessPolicy';
 
 // GET: Fetch current simulated date
 export async function GET() {
@@ -34,6 +39,19 @@ export async function GET() {
 // POST: Increment date and simulate global logs for all accounts
 export async function POST() {
   try {
+    const simulationEnabled =
+      process.env.ENABLE_DATE_SIMULATION === 'true' &&
+      (process.env.NODE_ENV !== 'production' || process.env.DEMO_MODE === 'true');
+    if (!simulationEnabled) {
+      return NextResponse.json(
+        { success: false, error: 'Date simulation is disabled in this environment.' },
+        { status: 403 }
+      );
+    }
+    const { user, response } = await requireRoles(['ADMIN']);
+    if (response) return response;
+    const rateLimitError = await demoMutationResponse(user);
+    if (rateLimitError) return NextResponse.json(rateLimitError, { status: 429 });
     await dbConnect();
 
     let state = await SystemState.findOne();
@@ -46,6 +64,10 @@ export async function POST() {
     state.simulatedDate = nextDate;
     await state.save();
 
+    // Sunday → Monday: archive Clean Plate Scores, reset all students to 0 for the new week
+    // (Meal taste ratings are never reset — they stay in MealRating forever.)
+    const scoreReset = await maybeResetScoresOnWeekRollover(prevDate, nextDate);
+
     const formattedDate = nextDate.toISOString().split('T')[0];
     const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayOfWeekName = weekdays[nextDate.getUTCDay()];
@@ -56,6 +78,8 @@ export async function POST() {
     const diff = tempDate.getUTCDate() - day + (day === 0 ? -6 : 1);
     const weekStartDate = new Date(Date.UTC(tempDate.getUTCFullYear(), tempDate.getUTCMonth(), diff));
     weekStartDate.setUTCHours(0, 0, 0, 0);
+
+    await ensureWeeklyMenu(weekStartDate);
 
     const allWeeklyItems = await WeeklyMenu.find({
       weekStartDate,
@@ -86,43 +110,89 @@ export async function POST() {
         await MealRating.findOneAndUpdate(
           { user: student._id, dish: dish._id, date: nextDate },
           { rating: simulatedRating },
-          { upsert: true, new: true }
+          { upsert: true, returnDocument: 'after' }
         );
       }
 
-      // Waste: 1 = zero waste (clean plate), 2 = minimal
-      const simulatedWaste = Math.random() > 0.6 ? 2 : 1; // 60% chance of clean plate
-      const activeDish = resolvedDishes[0] || fallbackDish;
+      // Simulate up to 4 meals/day with the same point map as /api/waste:
+      // clean +10, minimal +5, ok 0, moderate -5, heavy -15
+      // Typical net: ~+20–35 on good days; occasional -5 to -12 on bad days
+      // so demos can climb from 0 → 90+ within a week of "Next Day" clicks.
+      const wastePointDelta = (level) => {
+        switch (level) {
+          case 1: return 10;
+          case 2: return 5;
+          case 3: return 0;
+          case 4: return -5;
+          case 5: return -15;
+          default: return 0;
+        }
+      };
 
+      // Weighted waste level: mostly clean plates, rare heavy waste
+      const rollWasteLevel = () => {
+        const r = Math.random();
+        if (r < 0.55) return 1; // clean
+        if (r < 0.78) return 2; // minimal
+        if (r < 0.90) return 3; // ok
+        if (r < 0.97) return 4; // moderate
+        return 5; // heavy
+      };
+
+      const mealCount = Math.max(resolvedDishes.length, 4);
+      let dayPoints = 0;
+      let wasteSum = 0;
+      for (let m = 0; m < mealCount; m++) {
+        const level = rollWasteLevel();
+        wasteSum += level;
+        dayPoints += wastePointDelta(level);
+      }
+      const avgWasteLevel = Math.max(1, Math.min(5, Math.round(wasteSum / mealCount)));
+
+      const activeDish = resolvedDishes[0] || fallbackDish;
       await WasteLog.findOneAndUpdate(
         { user: student._id, date: nextDate },
-        { 
-          wasteLevel: simulatedWaste,
+        {
+          wasteLevel: avgWasteLevel,
           dish: activeDish?._id,
           wing: studentWing,
-          imageUrl: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&auto=format&fit=crop&q=60',
+          imageUrl:
+            'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&auto=format&fit=crop&q=60',
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
 
-      // Clean plate progress (capped at 100; feast unlock needs wing avg 90+)
-      const pointsGained = simulatedWaste === 1 ? 5 : 2;
-      student.cleanPlateScore = Math.min(100, student.cleanPlateScore + pointsGained);
+      const current = student.cleanPlateScore ?? 0;
+      student.cleanPlateScore = Math.max(0, Math.min(100, current + dayPoints));
       await student.save();
     }
 
     if (global.io) {
-      global.io.emit('date-simulated', {
+      global.io.to(socketEventRoom('date-simulated')).emit('date-simulated', {
         date: formattedDate,
         dayOfWeek: dayOfWeekName,
+        cleanPlateReset: !!scoreReset.rolled,
       });
+    }
+
+    let message = `Simulated date advanced to ${formattedDate} (${dayOfWeekName}). Ratings and waste logs simulated for ${students.length} students.`;
+    if (scoreReset.rolled && scoreReset.archived) {
+      message += ` New week: Clean Plate Scores archived (hostel avg was ${scoreReset.hostelAvg}) and reset to 0.`;
     }
 
     return NextResponse.json({
       success: true,
-      message: `Simulated date advanced to ${formattedDate} (${dayOfWeekName}). Rating reviews and waste logs successfully simulated for all ${students.length} students!`,
+      message,
       date: formattedDate,
       dayOfWeekName,
+      cleanPlateReset: scoreReset.rolled
+        ? {
+            archived: scoreReset.archived,
+            hostelAvg: scoreReset.hostelAvg,
+            studentsReset: scoreReset.studentsReset,
+            weekStart: scoreReset.weekStart,
+          }
+        : null,
     });
   } catch (error) {
     console.error('[API Simulate Date POST] Error:', error);

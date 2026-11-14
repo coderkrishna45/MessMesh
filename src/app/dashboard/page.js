@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 
 export default function DashboardPage() {
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
   const router = useRouter();
 
   const [stats, setStats] = useState(null);
@@ -38,12 +38,30 @@ export default function DashboardPage() {
   const [reportLoading, setReportLoading] = useState(false);
   const [wingStats, setWingStats] = useState(null);
   const [wingLoading, setWingLoading] = useState(false);
+  const [liveScore, setLiveScore] = useState(null);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
       router.push('/login');
     }
-  }, [status, router]);
+    if (session?.user?.role === 'ADMIN') router.replace('/admin');
+  }, [status, session?.user?.role, router]);
+
+  // Live Clean Plate Score (JWT can be stale after weekly Monday reset)
+  useEffect(() => {
+    if (status !== 'authenticated' || session?.user?.role !== 'STUDENT') return;
+    fetch('/api/student/score')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setLiveScore(data.cleanPlateScore);
+          if (data.cleanPlateScore !== session.user.cleanPlateScore) {
+            update({ cleanPlateScore: data.cleanPlateScore });
+          }
+        }
+      })
+      .catch(() => {});
+  }, [status, session?.user?.role, session?.user?.cleanPlateScore, update]);
 
   useEffect(() => {
     if (session?.user?.role === 'WARDEN') {
@@ -109,7 +127,9 @@ export default function DashboardPage() {
 
   if (!session) return null;
 
-  const { name, role, wing, cleanPlateScore = 100 } = session.user;
+  const { name, role, wing } = session.user;
+  const cleanPlateScore =
+    liveScore ?? session.user.cleanPlateScore ?? 0;
 
   const getBadgeIconAndColor = (score) => {
     if (score >= 90) return { label: 'Eco Champion', color: 'text-emerald-primary border-emerald-primary/30 bg-emerald-primary/10', icon: Sparkles };

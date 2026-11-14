@@ -7,8 +7,8 @@ export async function GET(req) {
   try {
     await dbConnect();
 
-    const students = await User.find({ role: 'STUDENT' })
-      .select('name email wing cleanPlateScore')
+    const students = await User.find({ role: 'STUDENT', active: { $ne: false } })
+      .select('name wing cleanPlateScore')
       .exec();
 
     const wingGroups = {};
@@ -21,7 +21,7 @@ export async function GET(req) {
           studentCount: 0,
         };
       }
-      wingGroups[wingName].totalScore += student.cleanPlateScore || 100;
+      wingGroups[wingName].totalScore += student.cleanPlateScore ?? 0;
       wingGroups[wingName].studentCount += 1;
     });
 
@@ -42,7 +42,6 @@ export async function GET(req) {
       studentLeaderboard: studentLeaderboard.map((student) => ({
         id: student._id,
         name: student.name,
-        email: student.email,
         wing: student.wing,
         cleanPlateScore: student.cleanPlateScore || 0,
       })),

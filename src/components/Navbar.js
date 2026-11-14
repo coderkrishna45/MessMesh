@@ -20,6 +20,7 @@ import {
   CheckCheck,
   Trash,
   Users,
+  ShieldCheck,
 } from 'lucide-react';
 
 export default function Navbar() {
@@ -89,6 +90,7 @@ export default function Navbar() {
     if (status !== 'authenticated' || !session?.user) return;
 
     const { role, wing } = session.user;
+    if (role === 'ADMIN') router.replace('/admin');
 
     // Toast survives socket-driven full page reload
     const advancedDay = sessionStorage.getItem('dateAdvancedToast');
@@ -96,6 +98,14 @@ export default function Navbar() {
       toast.success(`📅 Date advanced to ${advancedDay}`);
       addNotification(`📅 Date advanced to ${advancedDay}`, 'info');
       sessionStorage.removeItem('dateAdvancedToast');
+    }
+
+    const scoreResetMsg = sessionStorage.getItem('cleanPlateResetToast');
+    if (scoreResetMsg) {
+      toast.success(scoreResetMsg);
+      addNotification(scoreResetMsg, 'success');
+      sessionStorage.removeItem('cleanPlateResetToast');
+      sessionStorage.removeItem('messmesh_low_score_warned');
     }
 
     // Warn students once per browser session when score falls below 70
@@ -123,6 +133,12 @@ export default function Navbar() {
 
     socket.on('date-simulated', (data) => {
       sessionStorage.setItem('dateAdvancedToast', data.dayOfWeek);
+      if (data.cleanPlateReset) {
+        sessionStorage.setItem(
+          'cleanPlateResetToast',
+          'Clean Plate Scores reset to 0 for the new week (previous week archived).'
+        );
+      }
       window.location.reload();
     });
 
@@ -150,7 +166,7 @@ export default function Navbar() {
     return () => {
       socket.disconnect();
     };
-  }, [status, session, addNotification]);
+  }, [status, session, addNotification, router]);
 
   const fetchSimDate = async () => {
     try {
@@ -216,9 +232,10 @@ export default function Navbar() {
       allowed: ['STUDENT', 'WARDEN'],
     },
     { label: 'Log Waste', href: '/waste-log', icon: Trash2, allowed: ['STUDENT'] },
-    { label: 'Analytics', href: '/admin', icon: TrendingUp, allowed: ['WARDEN'] },
-    { label: 'Students', href: '/warden/manage-students', icon: Users, allowed: ['WARDEN'] },
-    { label: 'Leaderboard', href: '/leaderboard', icon: Trophy, allowed: ['STUDENT', 'WARDEN'] },
+    { label: 'Analytics', href: '/admin', icon: TrendingUp, allowed: ['ADMIN', 'WARDEN'] },
+    { label: 'Students', href: '/warden/manage-students', icon: Users, allowed: ['ADMIN', 'WARDEN'] },
+    { label: 'Wardens', href: '/admin/wardens', icon: ShieldCheck, allowed: ['ADMIN'] },
+    { label: 'Leaderboard', href: '/leaderboard', icon: Trophy, allowed: ['ADMIN', 'STUDENT', 'WARDEN'] },
   ];
 
   const allowedItems = navItems.filter((item) => item.allowed.includes(role));
@@ -380,7 +397,7 @@ export default function Navbar() {
             })}
           </div>
 
-          <div className="hidden lg:flex items-center gap-2.5 border border-slate-border bg-charcoal-dark/60 px-3.5 py-1.5 rounded-xl shrink-0">
+          {role === 'ADMIN' && process.env.NEXT_PUBLIC_ENABLE_DATE_SIMULATION === 'true' && <div className="hidden lg:flex items-center gap-2.5 border border-slate-border bg-charcoal-dark/60 px-3.5 py-1.5 rounded-xl shrink-0">
             <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider flex items-center gap-1.5 select-none">
               <span className="h-2 w-2 rounded-full bg-emerald-primary animate-pulse" />
               {simDayName || '...'} ({simDate || '...'})
@@ -396,7 +413,7 @@ export default function Navbar() {
                 'Next Day ➔'
               )}
             </button>
-          </div>
+          </div>}
 
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
             <div className="relative" ref={bellRef}>
@@ -453,7 +470,7 @@ export default function Navbar() {
             );
           })}
 
-          <div className="flex items-center justify-between border border-slate-border bg-slate-card/10 p-3 rounded-xl">
+          {role === 'ADMIN' && process.env.NEXT_PUBLIC_ENABLE_DATE_SIMULATION === 'true' && <div className="flex items-center justify-between border border-slate-border bg-slate-card/10 p-3 rounded-xl">
             <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-emerald-primary animate-pulse" />
               {simDayName || '...'}: {simDate || '...'}
@@ -465,7 +482,7 @@ export default function Navbar() {
             >
               {simulating ? 'Simulating...' : 'Next Day ➔'}
             </button>
-          </div>
+          </div>}
 
           <div className="border-t border-slate-border/50 pt-4 mt-2 flex items-center justify-between px-4">
             <div className="flex flex-col">
@@ -482,6 +499,11 @@ export default function Navbar() {
               Sign Out
             </button>
           </div>
+        </div>
+      )}
+      {(process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || session.user.isDemoAccount) && (
+        <div className="border-t border-amber-400/20 bg-amber-400/10 px-4 py-2 text-center text-xs font-semibold text-amber-200">
+          DEMO ENVIRONMENT — all accounts and activity are fictional.
         </div>
       )}
     </nav>

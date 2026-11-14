@@ -1,23 +1,20 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
 import dbConnect from '@/lib/db';
 import WasteLog from '@/lib/models/WasteLog';
-import User from '@/lib/models/User';
 import SystemState from '@/lib/models/SystemState';
-import { authOptions } from '@/lib/auth';
+import { requireRoles } from '@/lib/authorization';
+import { demoMutationResponse } from '@/lib/demoLimits';
+import { socketEventRoom } from '@/lib/accessPolicy';
 
 // POST /api/waste — log plate waste and update Clean Plate Score
 export async function POST(req) {
   try {
     await dbConnect();
 
-    const session = await getServerSession(authOptions);
-    if (!session) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized. Please login.' },
-        { status: 401 }
-      );
-    }
+    const { user, response } = await requireRoles(['STUDENT']);
+    if (response) return response;
+    const rateLimitError = await demoMutationResponse(user);
+    if (rateLimitError) return NextResponse.json(rateLimitError, { status: 429 });
 
     const { dishId, wasteLevel, imageUrl } = await req.json();
 
@@ -36,21 +33,6 @@ export async function POST(req) {
       );
     }
 
-    const userId = session.user.id;
-
-    // Fall back to email if session ID is stale after a reseed
-    let user = await User.findById(userId);
-    if (!user && session.user.email) {
-      user = await User.findOne({ email: session.user.email });
-    }
-
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'User not found. Please sign out and sign back in.' },
-        { status: 404 }
-      );
-    }
-
     // Clean Plate Score delta by waste level (1 clean … 5 heavy)
     let pointsDelta = 0;
     switch (parsedWasteLevel) {
@@ -61,8 +43,8 @@ export async function POST(req) {
       case 5: pointsDelta = -15; break;
     }
 
-    // Score clamped to 0–100
-    const oldScore = user.cleanPlateScore || 100;
+    // Score clamped to 0–100 (starts at 0 each Monday; use ?? so 0 is valid)
+    const oldScore = user.cleanPlateScore ?? 0;
     const newScore = Math.max(0, Math.min(100, oldScore + pointsDelta));
     user.cleanPlateScore = newScore;
     await user.save();
@@ -83,8 +65,9 @@ export async function POST(req) {
     });
 
     // Notify wardens on high waste (4 moderate / 5 heavy)
-    if (parsedWasteLevel >= 4 && global.io) {
-      global.io.emit('high-waste-logged', {
+    const alertRoom = socketEventRoom('high-waste-logged', user.wing);
+    if (parsedWasteLevel >= 4 && global.io && alertRoom) {
+      global.io.to(alertRoom).emit('high-waste-logged', {
         wing: user.wing,
         wasteLevel: parsedWasteLevel,
         studentName: user.name,

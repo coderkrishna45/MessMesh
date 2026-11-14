@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { KeyRound, Mail, AlertCircle, ChefHat, ShieldAlert } from 'lucide-react';
@@ -11,6 +11,14 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [demoEnabled, setDemoEnabled] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/demo/status')
+      .then((response) => response.json())
+      .then((data) => setDemoEnabled(data.enabled === true))
+      .catch(() => setDemoEnabled(false));
+  }, []);
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -38,13 +46,12 @@ export default function LoginPage() {
     }
   };
 
-  const handleQuickLogin = async (selectedEmail, selectedPassword) => {
+  const handleDemoLogin = async (demoRole) => {
     setError('');
     setLoading(true);
     try {
       const res = await signIn('credentials', {
-        email: selectedEmail,
-        password: selectedPassword,
+        demoRole,
         redirect: false,
       });
 
@@ -61,16 +68,6 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
-
-  // Seeded demo accounts (dev quick-login only)
-  const quickAccounts = [
-    { name: 'Warden Susan', email: 'warden1@messmesh.com', pass: 'warden123', role: 'WARDEN', wing: 'A-Wing' },
-    { name: 'Warden Thomas', email: 'warden2@messmesh.com', pass: 'warden123', role: 'WARDEN', wing: 'B-Wing' },
-    { name: 'Warden Michael', email: 'warden3@messmesh.com', pass: 'warden123', role: 'WARDEN', wing: 'C-Wing' },
-    { name: 'Warden Sarah', email: 'warden4@messmesh.com', pass: 'warden123', role: 'WARDEN', wing: 'D-Wing' },
-    { name: 'Alice Smith', email: 'student1@messmesh.com', pass: 'student123', role: 'STUDENT', wing: 'A-Wing' },
-    { name: 'Charlie Brown', email: 'student3@messmesh.com', pass: 'student123', role: 'STUDENT', wing: 'C-Wing' },
-  ];
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-charcoal-dark px-4 py-12 sm:px-6 lg:px-8">
@@ -148,50 +145,32 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Dev-only quick login; omitted from production builds */}
-          {process.env.NODE_ENV !== 'production' && (
+          {demoEnabled && (
             <div className="mt-8 border-t border-slate-border/80 pt-6 space-y-4">
               <div className="flex items-center gap-2 text-slate-400">
                 <ShieldAlert className="h-4 w-4 text-terracotta" />
                 <h4 className="text-xs font-semibold uppercase tracking-wider">
-                  Developer Tool: Single-Tap Login Simulator
+                  Public portfolio demo
                 </h4>
               </div>
-
               <p className="text-[11px] text-slate-500 leading-normal">
-                Click any of the pre-seeded account blocks below to bypass credentials
-                input. Hidden automatically in production builds.
+                Explore the isolated demo using fictional accounts and sample activity.
               </p>
-
-              <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
-                {quickAccounts.map((acc) => (
-                  <div
-                    key={acc.email}
-                    onClick={() => handleQuickLogin(acc.email, acc.pass)}
-                    className="cursor-pointer rounded-xl border border-slate-800/80 bg-charcoal-dark hover:border-emerald-primary/30 p-3 hover:bg-slate-card transition-all flex flex-col justify-between group active:scale-[0.98]"
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  ['ADMIN', 'Explore as Admin'],
+                  ['WARDEN', 'Explore as Warden'],
+                  ['STUDENT', 'Explore as Student'],
+                ].map(([role, label]) => (
+                  <button
+                    key={role}
+                    type="button"
+                    disabled={loading}
+                    onClick={() => handleDemoLogin(role)}
+                    className="rounded-xl border border-slate-800/80 bg-charcoal-dark px-3 py-3 text-xs font-bold text-white transition-colors hover:border-emerald-primary/40 hover:text-emerald-primary disabled:opacity-50"
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs text-white group-hover:text-emerald-primary transition-colors">
-                        {acc.name}
-                      </span>
-                      <span
-                        className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded border uppercase tracking-wider ${
-                          acc.role === 'WARDEN'
-                            ? 'bg-terracotta/10 border-terracotta/20 text-terracotta'
-                            : 'bg-emerald-primary/10 border-emerald-primary/20 text-emerald-primary'
-                        }`}
-                      >
-                        {acc.role}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between mt-3 text-[10px] text-slate-500">
-                      <span>{acc.email}</span>
-                      <span className="font-medium text-slate-600 group-hover:text-slate-400 transition-colors">
-                        {acc.wing}
-                      </span>
-                    </div>
-                  </div>
+                    {label}
+                  </button>
                 ))}
               </div>
             </div>

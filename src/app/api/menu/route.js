@@ -5,6 +5,7 @@ import WeeklyMenu from '@/lib/models/WeeklyMenu';
 import Dish from '@/lib/models/Dish';
 import SystemState from '@/lib/models/SystemState';
 import { authOptions } from '@/lib/auth';
+import { getCurrentUser, VALID_WINGS } from '@/lib/authorization';
 
 // GET /api/menu?date=YYYY-MM-DD — daily menu for a wing
 export async function GET(req) {
@@ -13,7 +14,7 @@ export async function GET(req) {
 
     const { searchParams } = new URL(req.url);
     const dateParam = searchParams.get('date');
-    let wingParam = searchParams.get('wing');
+    let wingParam = null;
     
     let targetDate;
     if (dateParam) {
@@ -34,20 +35,25 @@ export async function GET(req) {
       );
     }
 
-    if (!wingParam) {
-      const session = await getServerSession(authOptions);
-      if (session?.user) {
-        wingParam = session.user.wing;
-      }
+    const session = await getServerSession(authOptions);
+    if (session?.user) {
+      const { user, response } = await getCurrentUser();
+      if (response) return response;
+      wingParam =
+        user.role === 'ADMIN'
+          ? searchParams.get('wing') || 'ALL'
+          : user.wing;
+    }
+    if (wingParam && wingParam !== 'ALL' && !VALID_WINGS.includes(wingParam)) {
+      return NextResponse.json({ success: false, error: 'Invalid wing.' }, { status: 400 });
     }
     const activeWing = wingParam || 'ALL';
 
-    // Monday of target date (UTC)
-    const tempDate = new Date(targetDate);
-    const day = tempDate.getUTCDay();
-    const diff = tempDate.getUTCDate() - day + (day === 0 ? -6 : 1);
-    const weekStartDate = new Date(Date.UTC(tempDate.getUTCFullYear(), tempDate.getUTCMonth(), diff));
-    weekStartDate.setHours(0, 0, 0, 0);
+    // Monday of target date (UTC) + ensure a full varied menu exists for the week
+    const { getMondayUTC } = await import('@/lib/weekUtils');
+    const { ensureWeeklyMenu } = await import('@/lib/ensureWeeklyMenu');
+    const weekStartDate = getMondayUTC(targetDate);
+    await ensureWeeklyMenu(weekStartDate);
 
     const weekdays = [
       'Sunday',

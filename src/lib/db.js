@@ -1,13 +1,26 @@
 import mongoose from 'mongoose';
-import '@/lib/models/User';
-import '@/lib/models/Dish';
-import '@/lib/models/WeeklyPoll';
-import '@/lib/models/WasteLog';
-import '@/lib/models/WeeklyMenu';
-import '@/lib/models/MealRating';
-import '@/lib/models/SystemState';
+import './models/User.js';
+import './models/Dish.js';
+import './models/WeeklyPoll.js';
+import './models/WasteLog.js';
+import './models/WeeklyMenu.js';
+import './models/MealRating.js';
+import './models/SystemState.js';
+import './models/WeeklyScoreSnapshot.js';
+import { safeDemoDatabase } from './accessPolicy.js';
 
-const MONGODB_URI = process.env.MONGODB_URI;
+if (process.env.DEMO_MODE === 'true') {
+  if (!safeDemoDatabase(process.env)) {
+    throw new Error(
+      'Demo mode requires a dedicated demo-named DEMO_MONGODB_URI and a distinct REAL_DATABASE_NAME.'
+    );
+  }
+}
+
+const MONGODB_URI =
+  process.env.DEMO_MODE === 'true'
+    ? process.env.DEMO_MONGODB_URI
+    : process.env.MONGODB_URI;
 
 if (!MONGODB_URI) {
   throw new Error(

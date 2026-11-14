@@ -1,25 +1,29 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
-import { authOptions } from '@/lib/auth';
 import bcrypt from 'bcryptjs';
+import { getCurrentUser } from '@/lib/authorization';
+import { canMutateAccount } from '@/lib/accessPolicy';
 
 // POST: Student change password
 export async function POST(req) {
   try {
     await dbConnect();
 
-    const session = await getServerSession(authOptions);
-    if (!session) {
-      return NextResponse.json({ success: false, error: 'Unauthorized. Please login.' }, { status: 401 });
+    const { user, response } = await getCurrentUser({ allowPasswordChange: true });
+    if (response) return response;
+    if (!canMutateAccount(user)) {
+      return NextResponse.json(
+        { success: false, error: 'Demo entry account credentials are protected.' },
+        { status: 403 }
+      );
     }
 
     const { newPassword } = await req.json();
 
-    if (!newPassword || newPassword.trim().length < 6) {
+    if (!newPassword || newPassword.trim().length < 10) {
       return NextResponse.json(
-        { success: false, error: 'Password must be at least 6 characters long' },
+        { success: false, error: 'Password must be at least 10 characters long' },
         { status: 400 }
       );
     }
@@ -36,27 +40,17 @@ export async function POST(req) {
       );
     }
 
-    const userId = session.user.id;
-
-    // Resolve user (fall back to email lookup if session has a stale ID)
-    let user = await User.findById(userId);
-    if (!user && session.user.email) {
-      user = await User.findOne({ email: session.user.email });
-    }
-
-    if (!user) {
-      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
-    }
-
     const hashedPassword = await bcrypt.hash(trimmed, 10);
     user.password = hashedPassword;
     user.needsPasswordChange = false;
+    user.authVersion = (user.authVersion || 0) + 1;
     await user.save();
+    if (global.io) global.io.in(`user:${user._id}`).disconnectSockets(true);
 
     return NextResponse.json({
       success: true,
-      message: 'Password updated successfully!',
-      needsPasswordChange: false,
+      message: 'Password updated. Sign in again to continue.',
+      reauthenticationRequired: true,
     });
   } catch (error) {
     console.error('[API Student Change Password POST] Error:', error);

@@ -1,34 +1,42 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import Dish from '@/lib/models/Dish';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
 import SystemState from '@/lib/models/SystemState';
-import { authOptions } from '@/lib/auth';
+import { requireRoles, VALID_WINGS } from '@/lib/authorization';
+import { demoMutationResponse } from '@/lib/demoLimits';
+import { socketEventRoom } from '@/lib/accessPolicy';
 
 // POST: Unlock Sunday Premium Feast for the warden's wing (Saturday-only, score 90+)
 export async function POST(req) {
   try {
     await dbConnect();
 
-    const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== 'WARDEN') {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized. Warden privileges required.' },
-        { status: 403 }
-      );
-    }
+    const { user, response } = await requireRoles(['WARDEN']);
+    if (response) return response;
+    const rateLimitError = await demoMutationResponse(user);
+    if (rateLimitError) return NextResponse.json(rateLimitError, { status: 429 });
 
-    const wardenWing = session.user.wing;
-    if (!wardenWing || wardenWing === 'Admin-Wing') {
+    const requestBody = await req.json().catch(() => ({}));
+    const wardenWing = user.wing;
+    if (!wardenWing || !VALID_WINGS.includes(wardenWing)) {
       return NextResponse.json(
         { success: false, error: 'Warden must be assigned to a specific hostel wing (A, B, C, or D).' },
         { status: 400 }
       );
     }
 
-    const { simulateSunday, date } = await req.json().catch(() => ({}));
+    const { simulateSunday, date } = requestBody;
+    const simulationEnabled =
+      process.env.ENABLE_DATE_SIMULATION === 'true' &&
+      (process.env.NODE_ENV !== 'production' || process.env.DEMO_MODE === 'true');
+    if ((simulateSunday || date) && !simulationEnabled) {
+      return NextResponse.json(
+        { success: false, error: 'Date overrides are disabled in this environment.' },
+        { status: 403 }
+      );
+    }
 
     let targetDate;
     if (date) {
@@ -90,17 +98,18 @@ export async function POST(req) {
     await WeeklyMenu.findOneAndUpdate(
       { weekStartDate, dayOfWeek: 'Sunday', mealType: 'LUNCH', wing: wardenWing },
       { dish: premiumLunch._id, isPremium: true },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
 
     await WeeklyMenu.findOneAndUpdate(
       { weekStartDate, dayOfWeek: 'Sunday', mealType: 'DINNER', wing: wardenWing },
       { dish: premiumDinner._id, isPremium: true },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
 
     if (global.io) {
-      global.io.emit('feast-unlocked', { wing: wardenWing });
+      global.io.to(socketEventRoom('feast-unlocked', wardenWing))
+        .emit('feast-unlocked', { wing: wardenWing });
     }
 
     return NextResponse.json({
