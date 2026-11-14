@@ -3,9 +3,10 @@ import { getServerSession } from 'next-auth/next';
 import dbConnect from '@/lib/db';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
 import Dish from '@/lib/models/Dish';
-import SystemState from '@/lib/models/SystemState';
 import { authOptions } from '@/lib/auth';
 import { getCurrentUser, VALID_WINGS } from '@/lib/authorization';
+import { getApplicationTime } from '@/lib/applicationTime';
+import { getMondayUTC } from '@/lib/weekUtils';
 
 // GET /api/menu?date=YYYY-MM-DD — daily menu for a wing
 export async function GET(req) {
@@ -20,12 +21,7 @@ export async function GET(req) {
     if (dateParam) {
       targetDate = new Date(dateParam);
     } else {
-      // Default to globally synchronized simulated date
-      let state = await SystemState.findOne();
-      if (!state) {
-        state = await SystemState.create({});
-      }
-      targetDate = new Date(state.simulatedDate);
+      targetDate = await getApplicationTime();
     }
 
     if (isNaN(targetDate.getTime())) {
@@ -49,11 +45,8 @@ export async function GET(req) {
     }
     const activeWing = wingParam || 'ALL';
 
-    // Monday of target date (UTC) + ensure a full varied menu exists for the week
-    const { getMondayUTC } = await import('@/lib/weekUtils');
-    const { ensureWeeklyMenu } = await import('@/lib/ensureWeeklyMenu');
+    // Reads never initialize or replace menu data.
     const weekStartDate = getMondayUTC(targetDate);
-    await ensureWeeklyMenu(weekStartDate);
 
     const weekdays = [
       'Sunday',

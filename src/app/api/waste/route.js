@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/db';
 import WasteLog from '@/lib/models/WasteLog';
-import SystemState from '@/lib/models/SystemState';
 import { requireRoles } from '@/lib/authorization';
 import { demoMutationResponse } from '@/lib/demoLimits';
 import { socketEventRoom } from '@/lib/accessPolicy';
+import { applicationDateStart, getApplicationTime } from '@/lib/applicationTime';
+import { recordCleanPlateScoreDelta } from '@/lib/weeklyScoreReset';
 
 // POST /api/waste — log plate waste and update Clean Plate Score
 export async function POST(req) {
@@ -43,17 +44,18 @@ export async function POST(req) {
       case 5: pointsDelta = -15; break;
     }
 
-    // Score clamped to 0–100 (starts at 0 each Monday; use ?? so 0 is valid)
-    const oldScore = user.cleanPlateScore ?? 0;
-    const newScore = Math.max(0, Math.min(100, oldScore + pointsDelta));
-    user.cleanPlateScore = newScore;
-    await user.save();
-
-    let state = await SystemState.findOne();
-    if (!state) {
-      state = await SystemState.create({});
+    const logDate = applicationDateStart(await getApplicationTime());
+    const updatedUser = await recordCleanPlateScoreDelta(
+      user._id,
+      pointsDelta,
+      logDate
+    );
+    if (!updatedUser) {
+      return NextResponse.json(
+        { success: false, error: 'Student account no longer exists.' },
+        { status: 404 }
+      );
     }
-    const logDate = new Date(state.simulatedDate);
 
     const newLog = await WasteLog.create({
       user: user._id,
@@ -79,7 +81,7 @@ export async function POST(req) {
       message: 'Waste log submitted successfully!',
       log: newLog,
       pointsEarned: pointsDelta,
-      newScore: user.cleanPlateScore,
+      newScore: updatedUser.cleanPlateScore,
     });
   } catch (error) {
     console.error('[API Waste POST] Error:', error);

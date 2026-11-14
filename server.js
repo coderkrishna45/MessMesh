@@ -10,6 +10,7 @@ const { socketRoomsFor } = require('./src/lib/accessPolicy.js');
 loadEnvConfig(process.cwd());
 
 const dev = process.env.NODE_ENV !== 'production';
+if (!process.env.NODE_ENV) process.env.NODE_ENV = dev ? 'development' : 'production';
 const port = parseInt(process.env.PORT || '3000', 10);
 
 // Next.js hostname is used for asset/HMR URLs — keep browser-reachable (localhost).

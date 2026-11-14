@@ -44,6 +44,10 @@ const UserSchema = new mongoose.Schema(
       type: Number,
       default: 0, // Weekly contest starts at 0 each Monday; fills to 100 via clean plates
     },
+    cleanPlateScoreWeekStart: {
+      type: Date,
+      default: null,
+    },
     rollNumber: {
       type: String,
       unique: true,

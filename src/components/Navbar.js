@@ -90,7 +90,6 @@ export default function Navbar() {
     if (status !== 'authenticated' || !session?.user) return;
 
     const { role, wing } = session.user;
-    if (role === 'ADMIN') router.replace('/admin');
 
     // Toast survives socket-driven full page reload
     const advancedDay = sessionStorage.getItem('dateAdvancedToast');

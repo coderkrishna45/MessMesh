@@ -25,7 +25,7 @@ Public recruiter access is available only from a separately configured demo depl
 | **Weekly PDF** | Download professional weekly report (leaderboard, top/bottom dishes, waste, forecast). |
 | **Manage students** | Manual add + CSV bulk upload (PapaParse), roster table, password reset. |
 | **Notifications** | Bell panel + toasts (feast unlock, high waste, date advanced). |
-| **Date simulator** | “Next Day” advances simulated hostel date and auto-logs sample activity. |
+| **Date simulator** | “Next Day” advances time only in explicitly enabled development/demo; weekly scores archive/reset without generating activity. |
 
 ---
 
@@ -169,6 +169,7 @@ This command additionally requires `DEMO_RESET_CONFIRM=YES_DEMO_RESET` and refus
 | `npm run create-admin` | Safely insert the first administrator interactively |
 | `npm run demo:reset` | Explicitly reset the separately configured demo database |
 | `npm run test:security` | Run focused authorization policy tests |
+| `npm run test:browser` | Run the Admin navigation browser regression test (`TEST_BROWSER=true`, `TEST_HTTP_BASE_URL`) |
 | `npm run check-db` | Test MongoDB connection from `.env.local` |
 | `npm run lint` | ESLint |
 

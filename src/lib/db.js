@@ -7,6 +7,8 @@ import './models/WeeklyMenu.js';
 import './models/MealRating.js';
 import './models/SystemState.js';
 import './models/WeeklyScoreSnapshot.js';
+import './models/WeeklyScoreState.js';
+import './models/WeeklyMenuInitialization.js';
 import { safeDemoDatabase } from './accessPolicy.js';
 
 if (process.env.DEMO_MODE === 'true') {

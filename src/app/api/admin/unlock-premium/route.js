@@ -3,10 +3,16 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import Dish from '@/lib/models/Dish';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
-import SystemState from '@/lib/models/SystemState';
 import { requireRoles, VALID_WINGS } from '@/lib/authorization';
 import { demoMutationResponse } from '@/lib/demoLimits';
 import { socketEventRoom } from '@/lib/accessPolicy';
+import {
+  applicationDateStart,
+  getApplicationTime,
+  isDateSimulationEnabled,
+  scoreForApplicationWeek,
+} from '@/lib/applicationTime';
+import { formatISODate, getMondayUTC } from '@/lib/weekUtils';
 
 // POST: Unlock Sunday Premium Feast for the warden's wing (Saturday-only, score 90+)
 export async function POST(req) {
@@ -28,9 +34,7 @@ export async function POST(req) {
     }
 
     const { simulateSunday, date } = requestBody;
-    const simulationEnabled =
-      process.env.ENABLE_DATE_SIMULATION === 'true' &&
-      (process.env.NODE_ENV !== 'production' || process.env.DEMO_MODE === 'true');
+    const simulationEnabled = isDateSimulationEnabled();
     if ((simulateSunday || date) && !simulationEnabled) {
       return NextResponse.json(
         { success: false, error: 'Date overrides are disabled in this environment.' },
@@ -38,17 +42,15 @@ export async function POST(req) {
       );
     }
 
-    let targetDate;
-    if (date) {
-      targetDate = new Date(date);
-    } else {
-      let state = await SystemState.findOne();
-      if (!state) {
-        state = await SystemState.create({});
-      }
-      targetDate = new Date(state.simulatedDate);
+    const targetDate = applicationDateStart(
+      date ? new Date(date) : await getApplicationTime()
+    );
+    if (Number.isNaN(targetDate.getTime())) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid date override.' },
+        { status: 400 }
+      );
     }
-    targetDate.setUTCHours(0, 0, 0, 0);
 
     // Business rule: feast unlock is Saturday-only (plans Sunday meals)
     const isSaturday = targetDate.getUTCDay() === 6;
@@ -61,11 +63,20 @@ export async function POST(req) {
     }
 
     // Business rule: wing average Clean Plate Score must be 90+
-    const wingAvgResult = await User.aggregate([
-      { $match: { role: 'STUDENT', wing: wardenWing } },
-      { $group: { _id: null, avgScore: { $avg: '$cleanPlateScore' } } },
-    ]);
-    const avgScore = wingAvgResult.length > 0 ? Math.round(wingAvgResult[0].avgScore) : 0;
+    const wingStudents = await User.find({
+      role: 'STUDENT',
+      active: { $ne: false },
+      wing: wardenWing,
+    })
+      .select('cleanPlateScore cleanPlateScoreWeekStart')
+      .lean();
+    const scoreTotal = wingStudents.reduce(
+      (sum, student) => sum + scoreForApplicationWeek(student, targetDate),
+      0
+    );
+    const avgScore = wingStudents.length
+      ? Math.round(scoreTotal / wingStudents.length)
+      : 0;
 
     if (avgScore < 90) {
       return NextResponse.json(
@@ -88,11 +99,7 @@ export async function POST(req) {
     }
 
     // Monday of this week (UTC) — weekStartDate key for WeeklyMenu
-    const tempDate = new Date(targetDate);
-    const dayOfWeek = tempDate.getUTCDay();
-    const diff = tempDate.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-    const weekStartDate = new Date(Date.UTC(tempDate.getUTCFullYear(), tempDate.getUTCMonth(), diff));
-    weekStartDate.setUTCHours(0, 0, 0, 0);
+    const weekStartDate = getMondayUTC(targetDate);
 
     // Wing-specific Sunday LUNCH/DINNER overrides (isPremium)
     await WeeklyMenu.findOneAndUpdate(
@@ -117,6 +124,7 @@ export async function POST(req) {
       message: `🎉 Premium Sunday Feast unlocked successfully for tomorrow in ${wardenWing}! Serving Sunday Premium Paneer Feast (Lunch) and Sunday Premium Chicken Feast (Dinner).`,
       wing: wardenWing,
       avgScore,
+      weekStartDate: formatISODate(weekStartDate),
     });
   } catch (error) {
     console.error('[API Unlock Premium POST] Error:', error);

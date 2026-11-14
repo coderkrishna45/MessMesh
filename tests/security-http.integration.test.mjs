@@ -152,6 +152,9 @@ test(
       { default: WasteLog },
       { default: AccountAudit },
       { default: AccountSetupToken },
+      { default: WeeklyScoreSnapshot },
+      { default: WeeklyScoreState },
+      { default: WeeklyMenuInitialization },
     ] = await Promise.all([
       import('../src/lib/models/User.js'),
       import('../src/lib/models/Dish.js'),
@@ -161,7 +164,11 @@ test(
       import('../src/lib/models/WasteLog.js'),
       import('../src/lib/models/AccountAudit.js'),
       import('../src/lib/models/AccountSetupToken.js'),
+      import('../src/lib/models/WeeklyScoreSnapshot.js'),
+      import('../src/lib/models/WeeklyScoreState.js'),
+      import('../src/lib/models/WeeklyMenuInitialization.js'),
     ]);
+    const { ensureWeeklyScorePeriod } = await import('../src/lib/weeklyScoreReset.js');
 
     const runId = randomBytes(8).toString('hex');
     const prefix = `http-test-${runId}`;
@@ -180,6 +187,28 @@ test(
     try {
       assert.equal(await User.countDocuments({}), 0, 'Use a fresh isolated test database.');
       assert.equal(await Dish.countDocuments({}), 0, 'Use a fresh isolated test database.');
+
+      const unauthenticatedMenu = await api(
+        `/api/menu?date=${testDate.toISOString().slice(0, 10)}`
+      );
+      assert.equal(unauthenticatedMenu.status, 200);
+      assert.deepEqual(unauthenticatedMenu.data.menu, []);
+      assert.deepEqual(
+        (await api(`/api/vote?date=${testDate.toISOString().slice(0, 10)}`)).data.menu,
+        []
+      );
+      assert.equal((await api('/api/vote/history')).status, 401);
+      assert.equal((await api('/api/admin/simulate-date')).status, 200);
+      assert.equal(
+        (await api('/api/admin/simulate-date', { method: 'POST' })).status,
+        401
+      );
+      assert.equal(await WeeklyMenu.countDocuments({}), 0);
+      assert.equal(await Dish.countDocuments({}), 0);
+      assert.equal(await SystemState.countDocuments({}), 0);
+      assert.equal(await WeeklyMenuInitialization.countDocuments({}), 0);
+      assert.equal(await WeeklyScoreState.countDocuments({}), 0);
+      assert.equal(await WeeklyScoreSnapshot.countDocuments({}), 0);
 
       const passwordHash = await bcrypt.hash(password, 10);
       const [admin, wardenB] = await User.create([
@@ -225,6 +254,36 @@ test(
         'demo-role login must not issue a session outside demo mode'
       );
       assert.equal((await api('/api/admin/stats', { cookie: adminCookie })).status, 200);
+      const menuInitializations = await Promise.all([
+        api('/api/admin/generate-menu', {
+          cookie: adminCookie,
+          method: 'POST',
+          body: { action: 'initialize', weekStartDate: '2026-11-23' },
+        }),
+        api('/api/admin/generate-menu', {
+          cookie: adminCookie,
+          method: 'POST',
+          body: { action: 'initialize', weekStartDate: '2026-11-23' },
+        }),
+      ]);
+      assert.deepEqual(menuInitializations.map((result) => result.status), [200, 200]);
+      assert.equal(await WeeklyMenuInitialization.countDocuments({}), 1);
+      assert.equal(
+        await WeeklyMenu.countDocuments({
+          weekStartDate: new Date('2026-11-23T00:00:00.000Z'),
+        }),
+        28,
+        'concurrent initialization should publish each slot once'
+      );
+      assert.equal(
+        (await api('/api/admin/generate-menu', {
+          cookie: adminCookie,
+          method: 'POST',
+          body: { action: 'initialize', weekStartDate: '2026-11-24' },
+        })).status,
+        400,
+        'explicit initialization must reject non-Monday weeks'
+      );
 
       const invited = await api('/api/admin/wardens', {
         cookie: adminCookie,
@@ -279,6 +338,16 @@ test(
       const wardenBCookie = await signIn(wardenB.email, password);
       assert.equal((await api('/api/admin/wardens', { cookie: wardenACookie })).status, 403);
       assert.equal((await api('/api/warden/students', { cookie: adminCookie })).status, 200);
+      assert.equal(
+        (
+          await api('/api/admin/generate-menu', {
+            cookie: wardenACookie,
+            method: 'POST',
+            body: { action: 'initialize', weekStartDate: '2026-11-23' },
+          })
+        ).status,
+        403
+      );
 
       const manuallyCreated = await api('/api/warden/students', {
         cookie: wardenACookie,
@@ -378,15 +447,55 @@ test(
       assert.equal((await api('/api/vote/history', { cookie: studentCookie })).status, 401);
       const studentSession = await signIn(studentA.username, secondPassword);
 
+      const sparsePublishedDish = await Dish.create({
+        name: `${prefix} sparse published dish`,
+        category: 'LUNCH',
+      });
+      await WeeklyMenu.create({
+        weekStartDate: weekStart,
+        dayOfWeek: 'Saturday',
+        mealType: 'LUNCH',
+        dish: sparsePublishedDish._id,
+        wing: 'ALL',
+      });
+      const weeklyMenuState = async () =>
+        (await WeeklyMenu.find({ weekStartDate: weekStart })
+          .sort({ dayOfWeek: 1, mealType: 1 })
+          .lean())
+          .map(({ _id, dish, dayOfWeek, mealType, wing }) => ({
+            id: _id.toString(),
+            dish: dish.toString(),
+            dayOfWeek,
+            mealType,
+            wing,
+          }));
+      const publishedMenuBeforeRead = await weeklyMenuState();
+      const dishCountBeforeRead = await Dish.countDocuments({});
       const menu = await api(`/api/menu?date=${testDate.toISOString().slice(0, 10)}`, {
         cookie: studentSession,
       });
       assert.equal(menu.status, 200);
       assert.equal(menu.data.resolvedWing, 'A-Wing');
-      assert.ok(menu.data.menu.length > 0);
+      assert.equal(menu.data.menu.length, 1);
+      assert.equal(menu.data.menu[0].dish._id, sparsePublishedDish._id.toString());
+      const voteMenu = await api(`/api/vote?date=${testDate.toISOString().slice(0, 10)}`, {
+        cookie: studentSession,
+      });
+      assert.equal(voteMenu.status, 200);
+      assert.equal(voteMenu.data.menu.length, 1);
       const history = await api('/api/vote/history', { cookie: studentSession });
       assert.equal(history.status, 200);
       assert.equal(history.data.history.length, 28);
+      assert.deepEqual(await weeklyMenuState(), publishedMenuBeforeRead);
+      assert.equal(await Dish.countDocuments({}), dishCountBeforeRead);
+      const preservePublishedMenu = await api('/api/admin/generate-menu', {
+        cookie: adminCookie,
+        method: 'POST',
+        body: { action: 'initialize', weekStartDate: '2026-11-09' },
+      });
+      assert.equal(preservePublishedMenu.status, 200);
+      assert.equal(preservePublishedMenu.data.initialized, false);
+      assert.deepEqual(await weeklyMenuState(), publishedMenuBeforeRead);
       assert.equal((await api('/api/vote/weekly-contest', { cookie: studentSession })).status, 200);
       assert.equal((await api('/api/leaderboard')).status, 200);
 
@@ -394,7 +503,7 @@ test(
       const rating = await api('/api/vote', {
         cookie: studentSession,
         method: 'POST',
-        body: { dishId: firstDish, rating: 5, date: testDate.toISOString() },
+        body: { dishId: firstDish, rating: 5, date: '2000-01-01T00:00:00.000Z' },
       });
       assert.equal(rating.status, 200);
       const waste = await api('/api/waste', {
@@ -403,8 +512,12 @@ test(
         body: { dishId: firstDish, wasteLevel: 5 },
       });
       assert.equal(waste.status, 200);
-      assert.ok(await MealRating.exists({ user: studentA.id, dish: firstDish }));
-      assert.ok(await WasteLog.exists({ user: studentA.id, dish: firstDish }));
+      const savedRating = await MealRating.findOne({ user: studentA.id, dish: firstDish });
+      const savedWaste = await WasteLog.findOne({ user: studentA.id, dish: firstDish });
+      assert.ok(savedRating);
+      assert.ok(savedWaste);
+      assert.equal(savedRating.date.toISOString().slice(0, 10), '2026-11-14');
+      assert.equal(savedWaste.date.toISOString().slice(0, 10), '2026-11-14');
 
       const wardenStats = await api('/api/admin/stats', { cookie: wardenACookie });
       assert.equal(wardenStats.status, 200);
@@ -538,6 +651,150 @@ test(
         403
       );
 
+      await SystemState.updateOne(
+        { _id: systemStateId },
+        { $set: { simulatedDate: new Date('2026-11-15T00:00:00.000Z') } }
+      );
+      const ratingsBeforeRollover = await MealRating.countDocuments({});
+      const wasteBeforeRollover = await WasteLog.countDocuments({});
+      await User.updateMany(
+        { role: 'STUDENT' },
+        {
+          $set: {
+            cleanPlateScore: 95,
+            cleanPlateScoreWeekStart: weekStart,
+          },
+        }
+      );
+      const rollover = await api('/api/admin/simulate-date', {
+        cookie: adminCookie,
+        method: 'POST',
+      });
+      assert.equal(rollover.status, 200);
+      assert.equal(rollover.data.date, '2026-11-16');
+      assert.equal(rollover.data.cleanPlateReset.archived, true);
+      const completedSnapshot = await WeeklyScoreSnapshot.findOne({
+        weekStartDate: weekStart,
+      });
+      assert.equal(completedSnapshot.status, 'COMPLETED');
+      assert.equal(completedSnapshot.hostelAvg, 95);
+      const resetScores = await User.find({ role: 'STUDENT' })
+        .select('cleanPlateScore cleanPlateScoreWeekStart')
+        .lean();
+      assert.ok(resetScores.every((user) => user.cleanPlateScore === 0));
+      assert.ok(
+        resetScores.every(
+          (user) =>
+            user.cleanPlateScoreWeekStart.toISOString() ===
+            '2026-11-16T00:00:00.000Z'
+        )
+      );
+      const currentStudentSession = await signIn(studentA.username, password);
+      const currentContest = await api('/api/vote/weekly-contest', {
+        cookie: currentStudentSession,
+      });
+      assert.equal(currentContest.status, 200);
+      assert.equal(currentContest.data.currentWeekStart, '2026-11-16');
+      assert.equal(currentContest.data.weeks[0].overall.avgScore, 0);
+      assert.ok(
+        currentContest.data.weeks[0].topStudents.every(
+          (student) => student.cleanPlateScore === 0
+        )
+      );
+      assert.equal(await MealRating.countDocuments({}), ratingsBeforeRollover);
+      assert.equal(await WasteLog.countDocuments({}), wasteBeforeRollover);
+
+      const nextWeekStart = new Date('2026-11-16T00:00:00.000Z');
+      await WeeklyScoreSnapshot.create({
+        weekStartDate: nextWeekStart,
+        weekEndDate: new Date('2026-11-22T23:59:59.999Z'),
+        status: 'PENDING',
+        hostelAvg: 71,
+        studentCount: resetScores.length,
+        wings: [],
+        topStudents: [],
+      });
+      await User.updateMany(
+        { role: 'STUDENT' },
+        {
+          $set: {
+            cleanPlateScore: 37,
+            cleanPlateScoreWeekStart: nextWeekStart,
+          },
+        }
+      );
+      const concurrentRollovers = await Promise.all([
+        ensureWeeklyScorePeriod(new Date('2026-11-23T00:00:00.000Z')),
+        ensureWeeklyScorePeriod(new Date('2026-11-23T00:00:00.000Z')),
+      ]);
+      assert.equal(concurrentRollovers.filter((result) => result.rolled).length, 1);
+      const recoveredSnapshot = await WeeklyScoreSnapshot.findOne({
+        weekStartDate: nextWeekStart,
+      });
+      assert.equal(recoveredSnapshot.status, 'COMPLETED');
+      assert.equal(recoveredSnapshot.hostelAvg, 71);
+      const recoveredScores = await User.find({ role: 'STUDENT' })
+        .select('cleanPlateScore cleanPlateScoreWeekStart')
+        .lean();
+      assert.ok(recoveredScores.every((user) => user.cleanPlateScore === 0));
+      assert.ok(
+        recoveredScores.every(
+          (user) =>
+            user.cleanPlateScoreWeekStart.toISOString() ===
+            '2026-11-23T00:00:00.000Z'
+        )
+      );
+      assert.equal(await MealRating.countDocuments({}), ratingsBeforeRollover);
+      assert.equal(await WasteLog.countDocuments({}), wasteBeforeRollover);
+
+      const interruptedWeekStart = new Date('2026-11-23T00:00:00.000Z');
+      await WeeklyScoreSnapshot.create({
+        weekStartDate: interruptedWeekStart,
+        weekEndDate: new Date('2026-11-29T23:59:59.999Z'),
+        status: 'PENDING',
+        hostelAvg: 63,
+        studentCount: recoveredScores.length,
+        wings: [],
+        topStudents: [],
+      });
+      await User.updateMany(
+        { role: 'STUDENT' },
+        {
+          $set: {
+            cleanPlateScore: 21,
+            cleanPlateScoreWeekStart: interruptedWeekStart,
+          },
+        }
+      );
+      await SystemState.updateOne(
+        { _id: systemStateId },
+        { $set: { simulatedDate: new Date('2026-11-30T00:00:00.000Z') } }
+      );
+      const recoveryRequest = await api('/api/admin/simulate-date', {
+        cookie: adminCookie,
+        method: 'POST',
+      });
+      assert.equal(recoveryRequest.status, 200);
+      assert.equal(recoveryRequest.data.date, '2026-12-01');
+      const interruptedSnapshot = await WeeklyScoreSnapshot.findOne({
+        weekStartDate: interruptedWeekStart,
+      });
+      assert.equal(interruptedSnapshot.status, 'COMPLETED');
+      assert.equal(interruptedSnapshot.hostelAvg, 63);
+      const afterRecoveryScores = await User.find({ role: 'STUDENT' })
+        .select('cleanPlateScore cleanPlateScoreWeekStart')
+        .lean();
+      assert.ok(afterRecoveryScores.every((user) => user.cleanPlateScore === 0));
+      assert.ok(
+        afterRecoveryScores.every(
+          (user) =>
+            user.cleanPlateScoreWeekStart.toISOString() ===
+            '2026-11-30T00:00:00.000Z'
+        )
+      );
+      assert.equal(await MealRating.countDocuments({}), ratingsBeforeRollover);
+      assert.equal(await WasteLog.countDocuments({}), wasteBeforeRollover);
+
       const wardenSetup = await api('/api/admin/wardens', {
         cookie: adminCookie,
         method: 'PATCH',
@@ -592,8 +849,34 @@ test(
         ]);
       }
       if (systemStateId) await SystemState.deleteOne({ _id: systemStateId });
-      await WeeklyMenu.deleteMany({ weekStartDate: weekStart });
-      await Dish.deleteMany({ name: { $in: DISHES_CATALOG.map((dish) => dish.name) } });
+      await WeeklyMenu.deleteMany({
+        weekStartDate: {
+          $in: [
+            weekStart,
+            new Date('2026-11-16T00:00:00.000Z'),
+            new Date('2026-11-23T00:00:00.000Z'),
+          ],
+        },
+      });
+      await WeeklyMenuInitialization.deleteMany({
+        _id: { $in: ['2026-11-09', '2026-11-23'] },
+      });
+      await WeeklyScoreSnapshot.deleteMany({
+        weekStartDate: {
+          $in: [
+            weekStart,
+            new Date('2026-11-16T00:00:00.000Z'),
+            new Date('2026-11-23T00:00:00.000Z'),
+          ],
+        },
+      });
+      await WeeklyScoreState.deleteMany({ _id: 'global' });
+      await Dish.deleteMany({
+        $or: [
+          { name: { $in: DISHES_CATALOG.map((dish) => dish.name) } },
+          { name: { $regex: `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}` } },
+        ],
+      });
       await mongoose.disconnect();
     }
   }

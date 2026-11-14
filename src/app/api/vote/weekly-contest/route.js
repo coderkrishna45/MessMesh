@@ -2,9 +2,8 @@ import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import WeeklyScoreSnapshot from '@/lib/models/WeeklyScoreSnapshot';
-import SystemState from '@/lib/models/SystemState';
-import { authOptions } from '@/lib/auth';
 import { requireRoles } from '@/lib/authorization';
+import { getApplicationTime, scoreForApplicationWeek } from '@/lib/applicationTime';
 import {
   getMondayUTC,
   formatISODate,
@@ -31,22 +30,22 @@ export async function GET(req) {
     if (isNaN(weeks) || weeks < 1) weeks = 4;
     if (weeks > 8) weeks = 8;
 
-    let state = await SystemState.findOne();
-    if (!state) {
-      state = await SystemState.create({});
-    }
-
-    const currentMonday = getMondayUTC(state.simulatedDate);
+    const applicationTime = await getApplicationTime();
+    const currentMonday = getMondayUTC(applicationTime);
     const weekEndExclusive = new Date(currentMonday);
     weekEndExclusive.setUTCDate(weekEndExclusive.getUTCDate() + 7);
 
     // Live scores for the current contest week
-    const students = await User.find({ role: 'STUDENT' })
-      .select('name wing cleanPlateScore')
+    const students = await User.find({ role: 'STUDENT', active: { $ne: false } })
+      .select('name wing cleanPlateScore cleanPlateScoreWeekStart')
       .lean();
+    const scoredStudents = students.map((student) => ({
+      ...student,
+      cleanPlateScore: scoreForApplicationWeek(student, applicationTime),
+    }));
 
     const liveWings = WINGS.map((wing) => {
-      const list = students.filter((u) => u.wing === wing);
+      const list = scoredStudents.filter((u) => u.wing === wing);
       const count = list.length;
       const sum = list.reduce((s, u) => s + (u.cleanPlateScore ?? 0), 0);
       return {
@@ -57,10 +56,10 @@ export async function GET(req) {
     }).sort((a, b) => b.avgScore - a.avgScore);
 
     const liveHostelAvg =
-      students.length > 0
+      scoredStudents.length > 0
         ? Math.round(
-            students.reduce((s, u) => s + (u.cleanPlateScore ?? 0), 0) /
-              students.length
+            scoredStudents.reduce((s, u) => s + (u.cleanPlateScore ?? 0), 0) /
+              scoredStudents.length
           )
         : 0;
 
@@ -77,7 +76,7 @@ export async function GET(req) {
         studentCount: students.length,
       },
       byWing: liveWings,
-      topStudents: [...students]
+      topStudents: [...scoredStudents]
         .sort((a, b) => (b.cleanPlateScore ?? 0) - (a.cleanPlateScore ?? 0))
         .slice(0, 5)
         .map((u) => ({
@@ -89,6 +88,7 @@ export async function GET(req) {
 
     // Archived weeks (previous Sundays → Monday rollovers)
     const snapshots = await WeeklyScoreSnapshot.find({})
+      .where({ status: { $ne: 'PENDING' } })
       .sort({ weekStartDate: -1 })
       .limit(weeks - 1)
       .lean();
@@ -131,7 +131,7 @@ export async function GET(req) {
     return NextResponse.json({
       success: true,
       currentWeekStart: formatISODate(currentMonday),
-      simulatedDate: formatISODate(new Date(state.simulatedDate)),
+      simulatedDate: formatISODate(applicationTime),
       contestRules:
         'Clean Plate Score starts at 0 every Monday, fills through the week (cap 100). Previous week is archived. Meal taste ratings do not reset.',
       weeks: weeksOut,

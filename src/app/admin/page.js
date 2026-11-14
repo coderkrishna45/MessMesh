@@ -52,6 +52,7 @@ export default function AdminPage() {
   const [loadingData, setLoadingData] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
   const [generatingMenu, setGeneratingMenu] = useState(false);
+  const [initializingMenu, setInitializingMenu] = useState(false);
   const [publishingMenu, setPublishingMenu] = useState(false);
   const [menuSuccessMessage, setMenuSuccessMessage] = useState('');
   const [error, setError] = useState('');
@@ -159,6 +160,34 @@ export default function AdminPage() {
       setError('An error occurred during menu generation.');
     } finally {
       setGeneratingMenu(false);
+    }
+  };
+
+  const handleInitializeCurrentMenu = async () => {
+    setInitializingMenu(true);
+    setMenuSuccessMessage('');
+    setError('');
+    try {
+      const res = await fetch('/api/admin/generate-menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'initialize' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMenuSuccessMessage(
+          data.initialized
+            ? `Default menu initialized for the week of ${data.weekStartDate}.`
+            : `An existing menu for the week of ${data.weekStartDate} was preserved.`
+        );
+      } else {
+        setError(data.error || 'Menu initialization failed.');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('An error occurred during menu initialization.');
+    } finally {
+      setInitializingMenu(false);
     }
   };
 
@@ -576,20 +605,38 @@ export default function AdminPage() {
                 )}
 
                 {!draftMenu && (
-                  <button
-                    onClick={handlePreviewMenu}
-                    disabled={generatingMenu}
-                    className="w-full rounded-xl bg-emerald-primary hover:bg-emerald-primary/95 text-slate-950 py-3.5 font-bold transition-all flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50 text-xs"
-                  >
-                    {generatingMenu ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 animate-spin text-slate-950" />
-                        Analyzing Taste Votes & Curating Draft...
-                      </>
-                    ) : (
-                      'Generate & Preview Next Week\'s Menu'
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <button
+                      onClick={handlePreviewMenu}
+                      disabled={generatingMenu}
+                      className="w-full rounded-xl bg-emerald-primary hover:bg-emerald-primary/95 text-slate-950 py-3.5 font-bold transition-all flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50 text-xs"
+                    >
+                      {generatingMenu ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin text-slate-950" />
+                          Analyzing Taste Votes & Curating Draft...
+                        </>
+                      ) : (
+                        'Generate & Preview Next Week\'s Menu'
+                      )}
+                    </button>
+                    {session.user.role === 'ADMIN' && (
+                      <button
+                        onClick={handleInitializeCurrentMenu}
+                        disabled={initializingMenu}
+                        className="w-full rounded-xl border border-slate-border bg-slate-card/40 text-white py-3.5 font-bold transition-all flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50 text-xs"
+                      >
+                        {initializingMenu ? (
+                          <>
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            Initializing...
+                          </>
+                        ) : (
+                          'Initialize Empty Current Week'
+                        )}
+                      </button>
                     )}
-                  </button>
+                  </div>
                 )}
               </div>
 

@@ -15,6 +15,11 @@ const WeeklyScoreSnapshotSchema = new mongoose.Schema(
       type: Date,
       required: true,
     },
+    status: {
+      type: String,
+      enum: ['PENDING', 'COMPLETED'],
+      default: 'COMPLETED',
+    },
     hostelAvg: {
       type: Number,
       default: 100,

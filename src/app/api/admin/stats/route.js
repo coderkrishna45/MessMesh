@@ -3,9 +3,10 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import WeeklyPoll from '@/lib/models/WeeklyPoll';
 import WasteLog from '@/lib/models/WasteLog';
-import SystemState from '@/lib/models/SystemState';
 import MealRating from '@/lib/models/MealRating';
 import { requireRoles } from '@/lib/authorization';
+import { getApplicationTime, scoreForApplicationWeek } from '@/lib/applicationTime';
+import { getMondayUTC } from '@/lib/weekUtils';
 
 // GET: Hostel-wide stats, wing breakdowns, dish rankings, and waste forecast
 export async function GET() {
@@ -46,20 +47,11 @@ export async function GET() {
     ]);
     const totalVotesCount = totalVotes.length > 0 ? totalVotes[0].total : 0;
 
-    let state = await SystemState.findOne();
-    if (!state) {
-      state = await SystemState.create({});
-    }
-
     const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const simDate = new Date(state.simulatedDate);
-    const dayOfWeekName = weekdays[simDate.getUTCDay()];
+    const applicationTime = await getApplicationTime();
+    const dayOfWeekName = weekdays[applicationTime.getUTCDay()];
 
-    // Current week range (Monday → Sunday) based on simulated date (UTC)
-    const day = simDate.getUTCDay();
-    const mondayOffset = day === 0 ? -6 : 1 - day;
-    const weekStart = new Date(Date.UTC(simDate.getUTCFullYear(), simDate.getUTCMonth(), simDate.getUTCDate() + mondayOffset));
-    weekStart.setUTCHours(0, 0, 0, 0);
+    const weekStart = getMondayUTC(applicationTime);
     const weekEnd = new Date(weekStart);
     weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
     weekEnd.setUTCHours(23, 59, 59, 999);
@@ -69,7 +61,7 @@ export async function GET() {
       start: formatISODate(weekStart),
       end: formatISODate(weekEnd),
       label: `${formatISODate(weekStart)} → ${formatISODate(weekEnd)}`,
-      currentDate: formatISODate(simDate),
+      currentDate: formatISODate(applicationTime),
       dayOfWeekName,
     };
 
@@ -81,7 +73,10 @@ export async function GET() {
 
     const allStudents = await User.find(studentsFilter);
     const totalStudentsCount = allStudents.length;
-    const totalScoresSum = allStudents.reduce((acc, curr) => acc + curr.cleanPlateScore, 0);
+    const totalScoresSum = allStudents.reduce(
+      (acc, student) => acc + scoreForApplicationWeek(student, applicationTime),
+      0
+    );
     const avgScore = totalStudentsCount > 0 ? Math.round(totalScoresSum / totalStudentsCount) : 0;
 
     const wingWasteRaw = await WasteLog.aggregate([
@@ -108,24 +103,17 @@ export async function GET() {
       };
     });
 
-    const wingScoresRaw = await User.aggregate([
-      { $match: studentsFilter },
-      {
-        $group: {
-          _id: '$wing',
-          avgScore: { $avg: '$cleanPlateScore' },
-          studentCount: { $sum: 1 },
-        },
-      },
-    ]);
-
     const wingScores = wingsList
-      .map((w) => {
-        const match = wingScoresRaw.find((r) => r._id === w);
+      .map((wing) => {
+        const students = allStudents.filter((student) => student.wing === wing);
+        const total = students.reduce(
+          (sum, student) => sum + scoreForApplicationWeek(student, applicationTime),
+          0
+        );
         return {
-          wing: w,
-          avgScore: match ? Math.round(match.avgScore) : 0,
-          studentCount: match ? match.studentCount : 0,
+          wing,
+          avgScore: students.length ? Math.round(total / students.length) : 0,
+          studentCount: students.length,
         };
       })
       .sort((a, b) => b.avgScore - a.avgScore);

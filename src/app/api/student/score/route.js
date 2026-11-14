@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/db';
 import { requireRoles } from '@/lib/authorization';
+import { getApplicationTime, scoreForApplicationWeek } from '@/lib/applicationTime';
 
 /** Live Clean Plate Score from DB (JWT can be stale after weekly reset). */
 export async function GET() {
@@ -12,7 +13,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
-      cleanPlateScore: user.cleanPlateScore ?? 0,
+      cleanPlateScore: scoreForApplicationWeek(user, await getApplicationTime()),
       wing: user.wing,
       role: user.role,
       name: user.name,

@@ -2,12 +2,9 @@ import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/db';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
 import MealRating from '@/lib/models/MealRating';
-import User from '@/lib/models/User';
-import SystemState from '@/lib/models/SystemState';
-import { authOptions } from '@/lib/auth';
-import { getMondayUTC, formatISODate } from '@/lib/weekUtils';
-import { ensureWeeklyMenu } from '@/lib/ensureWeeklyMenu';
+import { formatISODate, getMondayUTC } from '@/lib/weekUtils';
 import { requireRoles } from '@/lib/authorization';
+import { getApplicationTime } from '@/lib/applicationTime';
 
 const WEEKDAYS = [
   'Monday',
@@ -36,18 +33,12 @@ export async function GET(req) {
     let weekOffset = parseInt(searchParams.get('weekOffset') || '0', 10);
     if (isNaN(weekOffset) || weekOffset < 0 || weekOffset > 3) weekOffset = 0;
 
-    let state = await SystemState.findOne();
-    if (!state) state = await SystemState.create({});
-
-    const currentMonday = getMondayUTC(state.simulatedDate);
+    const currentMonday = getMondayUTC(await getApplicationTime());
     const targetMonday = new Date(currentMonday);
     targetMonday.setUTCDate(targetMonday.getUTCDate() - weekOffset * 7);
 
     const endOfWeek = new Date(targetMonday);
     endOfWeek.setUTCDate(endOfWeek.getUTCDate() + 7);
-
-    // Ensure this week has a full varied menu (fixes empty / repeated history grid)
-    await ensureWeeklyMenu(targetMonday);
 
     const menuItems = await WeeklyMenu.find({
       weekStartDate: targetMonday,

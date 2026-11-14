@@ -4,10 +4,11 @@ import WeeklyPoll from '@/lib/models/WeeklyPoll';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
 import Dish from '@/lib/models/Dish';
 import MealRating from '@/lib/models/MealRating';
-import SystemState from '@/lib/models/SystemState';
 import { getMondayUTC, formatISODate } from '@/lib/weekUtils';
 import { requireRoles } from '@/lib/authorization';
 import { demoMutationResponse } from '@/lib/demoLimits';
+import { getApplicationTime } from '@/lib/applicationTime';
+import { ensureWeeklyMenu, withWeeklyMenuLock } from '@/lib/ensureWeeklyMenu';
 
 /**
  * Rank dishes for next week's menu primarily by *previous week* taste ratings.
@@ -83,12 +84,51 @@ export async function POST(req) {
     const rateLimitError = await demoMutationResponse(user);
     if (rateLimitError) return NextResponse.json(rateLimitError, { status: 429 });
 
-    const { action } = await req.json();
+    const body = await req.json();
+    const { action } = body;
     if (action === 'publish' && user.role !== 'ADMIN') {
       return NextResponse.json(
         { success: false, error: 'Only administrators may publish the shared menu.' },
         { status: 403 }
       );
+    }
+
+    if (action === 'initialize') {
+      if (user.role !== 'ADMIN') {
+        return NextResponse.json(
+          { success: false, error: 'Only administrators may initialize a menu.' },
+          { status: 403 }
+        );
+      }
+
+      const applicationTime = await getApplicationTime();
+      if (
+        body.weekStartDate !== undefined &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(body.weekStartDate)
+      ) {
+        return NextResponse.json(
+          { success: false, error: 'weekStartDate must be a Monday in YYYY-MM-DD format.' },
+          { status: 400 }
+        );
+      }
+      const weekStart = body.weekStartDate
+        ? new Date(`${body.weekStartDate}T00:00:00.000Z`)
+        : getMondayUTC(applicationTime);
+      if (
+        Number.isNaN(weekStart.getTime()) ||
+        formatISODate(getMondayUTC(weekStart)) !== formatISODate(weekStart)
+      ) {
+        return NextResponse.json(
+          { success: false, error: 'weekStartDate must be a Monday in YYYY-MM-DD format.' },
+          { status: 400 }
+        );
+      }
+      const initialized = await ensureWeeklyMenu(weekStart);
+      return NextResponse.json({
+        success: true,
+        initialized,
+        weekStartDate: formatISODate(weekStart),
+      });
     }
 
     if (action !== 'preview' && action !== 'publish') {
@@ -115,11 +155,7 @@ export async function POST(req) {
       );
     }
 
-    let state = await SystemState.findOne();
-    if (!state) {
-      state = await SystemState.create({});
-    }
-    const thisMonday = getMondayUTC(state.simulatedDate);
+    const thisMonday = getMondayUTC(await getApplicationTime());
     const nextMonday = new Date(thisMonday);
     nextMonday.setUTCDate(nextMonday.getUTCDate() + 7);
 
@@ -178,72 +214,57 @@ export async function POST(req) {
       });
     }
 
-    const menuAssignments = [];
+    const publishResult = await withWeeklyMenuLock(nextMonday, async () => {
+      const menuAssignments = [];
+      weekdays.forEach((dayName, index) => {
+        const breakfastDishId = sortedOptions[index % sortedOptions.length].dish._id;
+        const lunchDishId = sortedOptions[(index + 1) % sortedOptions.length].dish._id;
+        const snacksDishId = sortedOptions[(index + 2) % sortedOptions.length].dish._id;
+        const dinnerDishId = sortedOptions[(index + 3) % sortedOptions.length].dish._id;
 
-    weekdays.forEach((dayName, index) => {
-      const breakfastDishId = sortedOptions[index % sortedOptions.length].dish._id;
-      const lunchDishId = sortedOptions[(index + 1) % sortedOptions.length].dish._id;
-      const snacksDishId = sortedOptions[(index + 2) % sortedOptions.length].dish._id;
-      const dinnerDishId = sortedOptions[(index + 3) % sortedOptions.length].dish._id;
-
-      menuAssignments.push(
-        {
-          weekStartDate: nextMonday,
-          dayOfWeek: dayName,
-          mealType: 'BREAKFAST',
-          dish: breakfastDishId,
-        },
-        {
-          weekStartDate: nextMonday,
-          dayOfWeek: dayName,
-          mealType: 'LUNCH',
-          dish: lunchDishId,
-        },
-        {
-          weekStartDate: nextMonday,
-          dayOfWeek: dayName,
-          mealType: 'SNACKS',
-          dish: snacksDishId,
-        },
-        {
-          weekStartDate: nextMonday,
-          dayOfWeek: dayName,
-          mealType: 'DINNER',
-          dish: dinnerDishId,
-        }
-      );
-    });
-
-    await WeeklyMenu.deleteMany({ weekStartDate: nextMonday });
-    const compiledMenu = await WeeklyMenu.create(menuAssignments);
-
-    const existingNextPoll = await WeeklyPoll.findOne({ weekStartDate: nextMonday });
-
-    if (!existingNextPoll) {
-      activePoll.status = 'ARCHIVED';
-      await activePoll.save();
-
-      const allDishes = await Dish.find({});
-      const freshPollDishes = allDishes.map((dish) => ({
-        dish: dish._id,
-        votes: 0,
-        voters: [],
-      }));
-
-      await WeeklyPoll.create({
-        weekStartDate: nextMonday,
-        dishes: freshPollDishes,
-        status: 'ACTIVE',
+        menuAssignments.push(
+          { weekStartDate: nextMonday, dayOfWeek: dayName, mealType: 'BREAKFAST', dish: breakfastDishId },
+          { weekStartDate: nextMonday, dayOfWeek: dayName, mealType: 'LUNCH', dish: lunchDishId },
+          { weekStartDate: nextMonday, dayOfWeek: dayName, mealType: 'SNACKS', dish: snacksDishId },
+          { weekStartDate: nextMonday, dayOfWeek: dayName, mealType: 'DINNER', dish: dinnerDishId }
+        );
       });
-    }
+
+      await WeeklyMenu.deleteMany({ weekStartDate: nextMonday });
+      const compiledMenu = await WeeklyMenu.create(menuAssignments);
+      const existingNextPoll = await WeeklyPoll.findOne({ weekStartDate: nextMonday });
+
+      if (!existingNextPoll) {
+        activePoll.status = 'ARCHIVED';
+        await activePoll.save();
+
+        const allDishes = await Dish.find({});
+        const freshPollDishes = allDishes.map((dish) => ({
+          dish: dish._id,
+          votes: 0,
+          voters: [],
+        }));
+
+        await WeeklyPoll.create({
+          weekStartDate: nextMonday,
+          dishes: freshPollDishes,
+          status: 'ACTIVE',
+        });
+      }
+
+      return {
+        compiledMenu,
+        nextPollGenerated: !existingNextPoll,
+      };
+    });
 
     return NextResponse.json({
       success: true,
       message:
         "Next week's menu published successfully (ranked by previous week's meal ratings).",
       weekStartDate: formatISODate(nextMonday),
-      dishesScheduled: compiledMenu.length,
-      nextPollGenerated: !existingNextPoll,
+      dishesScheduled: publishResult.compiledMenu.length,
+      nextPollGenerated: publishResult.nextPollGenerated,
       rankingSource,
       previousWeekStart,
     });

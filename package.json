@@ -11,7 +11,8 @@
     "seed": "node scripts/seed-once.js",
     "create-admin": "node scripts/create-admin.mjs",
     "demo:reset": "node scripts/reset-demo.mjs",
-    "test:security": "node --test tests/*.test.mjs"
+    "test:security": "node --test tests/*.test.mjs",
+    "test:browser": "node --test tests/browser-navigation.test.mjs"
   },
   "dependencies": {
     "@eslint/eslintrc": "^3",
@@ -35,5 +36,7 @@
     "socket.io-client": "^4.8.3",
     "tailwindcss": "^4"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "playwright": "^1.65.1"
+  }
 }

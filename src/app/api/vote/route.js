@@ -4,14 +4,12 @@ import dbConnect from '@/lib/db';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
 import Dish from '@/lib/models/Dish';
 import MealRating from '@/lib/models/MealRating';
-import User from '@/lib/models/User';
-import SystemState from '@/lib/models/SystemState';
 import { authOptions } from '@/lib/auth';
 import { getMondayUTC, formatISODate } from '@/lib/weekUtils';
-import { ensureWeeklyMenu } from '@/lib/ensureWeeklyMenu';
 import { getCurrentUser, requireRoles } from '@/lib/authorization';
 import { demoMutationResponse } from '@/lib/demoLimits';
 import { socketEventRoom } from '@/lib/accessPolicy';
+import { applicationDateStart, getApplicationTime } from '@/lib/applicationTime';
 
 // GET /api/vote?date=YYYY-MM-DD — menu dishes with cumulative taste averages
 // (Meal ratings never weekly-reset; Clean Plate Score is separate.)
@@ -29,13 +27,9 @@ export async function GET(req) {
     if (dateParam) {
       targetDate = new Date(dateParam);
     } else {
-      let state = await SystemState.findOne();
-      if (!state) {
-        state = await SystemState.create({});
-      }
-      targetDate = new Date(state.simulatedDate);
+      targetDate = await getApplicationTime();
     }
-    targetDate.setUTCHours(0, 0, 0, 0);
+    targetDate = applicationDateStart(targetDate);
 
     if (isNaN(targetDate.getTime())) {
       return NextResponse.json(
@@ -53,8 +47,6 @@ export async function GET(req) {
     }
 
     const weekStartDate = getMondayUTC(targetDate);
-    await ensureWeeklyMenu(weekStartDate);
-
     const weekdays = [
       'Sunday',
       'Monday',
@@ -162,11 +154,11 @@ export async function POST(req) {
     const rateLimitError = await demoMutationResponse(user);
     if (rateLimitError) return NextResponse.json(rateLimitError, { status: 429 });
 
-    const { dishId, rating, date } = await req.json();
+    const { dishId, rating } = await req.json();
 
-    if (!dishId || rating === undefined || !date) {
+    if (!dishId || rating === undefined) {
       return NextResponse.json(
-        { success: false, error: 'Missing dishId, rating, or date' },
+        { success: false, error: 'Missing dishId or rating' },
         { status: 400 }
       );
     }
@@ -179,8 +171,7 @@ export async function POST(req) {
       );
     }
 
-    const targetDate = new Date(date);
-    targetDate.setUTCHours(0, 0, 0, 0);
+    const targetDate = applicationDateStart(await getApplicationTime());
 
     await MealRating.findOneAndUpdate(
       { user: user._id, dish: dishId, date: targetDate },

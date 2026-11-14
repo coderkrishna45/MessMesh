@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import Dish from '@/lib/models/Dish';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
+import WeeklyMenuInitialization from '@/lib/models/WeeklyMenuInitialization';
 import { DISHES_CATALOG, PREMIUM_DISH_NAMES } from '@/lib/dishesCatalog';
-import { getMondayUTC } from '@/lib/weekUtils';
+import { formatISODate, getMondayUTC } from '@/lib/weekUtils';
 
 const WEEKDAYS = [
   'Monday',
@@ -13,6 +15,8 @@ const WEEKDAYS = [
   'Sunday',
 ];
 const SLOTS = ['BREAKFAST', 'LUNCH', 'SNACKS', 'DINNER'];
+const INIT_LOCK_LEASE_MS = 2 * 60 * 1000;
+const INIT_LOCK_WAIT_MS = 15 * 1000;
 
 /**
  * Ensure dish catalog exists in DB (upsert by name).
@@ -103,41 +107,65 @@ export async function buildWeeklyMenuAssignments(weekStartDate) {
   return { weekStart, assignments };
 }
 
-/**
- * If no menu exists for this week, create a full varied schedule.
- * @returns {Promise<boolean>} true if menu was created
- */
-export async function ensureWeeklyMenu(weekStartDate) {
+async function acquireInitializationLock(weekKey) {
+  const owner = randomUUID();
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < INIT_LOCK_WAIT_MS) {
+    const now = new Date();
+    try {
+      const lock = await WeeklyMenuInitialization.findOneAndUpdate(
+        {
+          _id: weekKey,
+          $or: [
+            { leaseExpiresAt: { $exists: false } },
+            { leaseExpiresAt: { $lte: now } },
+          ],
+        },
+        {
+          $set: {
+            leaseOwner: owner,
+            leaseExpiresAt: new Date(now.getTime() + INIT_LOCK_LEASE_MS),
+          },
+        },
+        { upsert: true, returnDocument: 'after' }
+      );
+      if (lock?.leaseOwner === owner) return owner;
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Timed out waiting for the weekly menu initialization lock.');
+}
+
+export async function withWeeklyMenuLock(weekStartDate, callback) {
   const weekStart = getMondayUTC(weekStartDate);
   weekStart.setUTCHours(0, 0, 0, 0);
-
-  await ensureDishCatalog();
-
-  const existingRows = await WeeklyMenu.find({
-    weekStartDate: weekStart,
-    wing: 'ALL',
-    isPremium: { $ne: true },
-  }).select('dish');
-
-  const uniqueDishes = new Set(
-    existingRows.map((r) => r.dish?.toString()).filter(Boolean)
-  );
-
-  // Full week = 7 days × 4 meals = 28 rows; need real variety across days
-  if (existingRows.length >= 28 && uniqueDishes.size >= 14) {
-    return false;
+  const weekKey = formatISODate(weekStart);
+  const owner = await acquireInitializationLock(weekKey);
+  try {
+    return await callback(weekStart);
+  } finally {
+    await WeeklyMenuInitialization.updateOne(
+      { _id: weekKey, leaseOwner: owner },
+      { $unset: { leaseOwner: 1 }, $set: { leaseExpiresAt: new Date() } }
+    );
   }
+}
 
-  // Wipe thin / repetitive week menus and rebuild with the full catalog
-  await WeeklyMenu.deleteMany({
-    weekStartDate: weekStart,
-    wing: 'ALL',
-    isPremium: { $ne: true },
-  });
+/**
+ * Create a default menu only when no menu rows exist for the week.
+ * Existing published menus are never replaced for having limited variety.
+ */
+export async function ensureWeeklyMenu(weekStartDate) {
+  return withWeeklyMenuLock(weekStartDate, async (weekStart) => {
+    const existing = await WeeklyMenu.exists({ weekStartDate: weekStart });
+    if (existing) return false;
 
-  const { assignments } = await buildWeeklyMenuAssignments(weekStart);
-  if (assignments.length) {
+    const { assignments } = await buildWeeklyMenuAssignments(weekStart);
+    if (!assignments.length) return false;
+
     await WeeklyMenu.insertMany(assignments);
-  }
-  return true;
+    return true;
+  });
 }
