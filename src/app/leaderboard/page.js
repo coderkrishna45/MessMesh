@@ -16,7 +16,8 @@ import {
   Target,
   Sparkles,
   Lock,
-  Gift
+  Gift,
+  CalendarRange
 } from 'lucide-react';
 
 export default function LeaderboardPage() {
@@ -25,6 +26,8 @@ export default function LeaderboardPage() {
 
   const [wingLeaderboard, setWingLeaderboard] = useState([]);
   const [studentLeaderboard, setStudentLeaderboard] = useState([]);
+  const [contestWeeks, setContestWeeks] = useState([]);
+  const [contestWeekIndex, setContestWeekIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -44,13 +47,21 @@ export default function LeaderboardPage() {
     try {
       setLoading(true);
       setError('');
-      const res = await fetch('/api/leaderboard');
-      const data = await res.json();
+      const [lbRes, contestRes] = await Promise.all([
+        fetch('/api/leaderboard'),
+        fetch('/api/vote/weekly-contest?weeks=4'),
+      ]);
+      const data = await lbRes.json();
+      const contest = await contestRes.json();
       if (data.success) {
         setWingLeaderboard(data.wingLeaderboard);
         setStudentLeaderboard(data.studentLeaderboard);
       } else {
         setError(data.error || 'Failed to fetch leaderboard data.');
+      }
+      if (contest.success) {
+        setContestWeeks(contest.weeks || []);
+        setContestWeekIndex(0);
       }
     } catch (err) {
       console.error(err);
@@ -59,6 +70,8 @@ export default function LeaderboardPage() {
       setLoading(false);
     }
   };
+
+  const activeContest = contestWeeks[contestWeekIndex] || null;
 
   if (status === 'loading') {
     return (
@@ -178,6 +191,109 @@ export default function LeaderboardPage() {
               </p>
             </div>
           </div>
+
+          {/* Weekly Clean Plate Score history (live week + archives) */}
+          {!loading && contestWeeks.length > 0 && (
+            <section className="rounded-2xl border border-slate-border bg-slate-card/25 p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <Target className="h-5 w-5 text-emerald-primary" />
+                    Weekly Clean Plate Score
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                    Score starts at <strong className="text-white">0 every Monday</strong>, builds through
+                    the week with clean plates (target 90+ by Saturday for Sunday feast). Finished weeks
+                    are archived here (up to 4 weeks). Meal taste stars never reset.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1.5 border border-slate-800 bg-charcoal-dark p-1 rounded-xl shrink-0">
+                  {contestWeeks.map((w, idx) => (
+                    <button
+                      key={w.weekStart}
+                      type="button"
+                      onClick={() => setContestWeekIndex(idx)}
+                      className={`rounded-lg px-2.5 py-1.5 text-[10px] font-bold transition-all ${
+                        contestWeekIndex === idx
+                          ? 'bg-emerald-primary text-slate-950'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {w.isCurrent ? 'This Week' : w.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {activeContest && (
+                <>
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-charcoal-dark border border-slate-border px-3 py-1 text-slate-300">
+                      <CalendarRange className="h-3.5 w-3.5 text-emerald-primary" />
+                      {activeContest.rangeLabel}
+                    </span>
+                    <span className="rounded-full bg-emerald-primary/10 border border-emerald-primary/20 text-emerald-primary px-3 py-1 font-bold">
+                      Hostel avg {activeContest.overall?.avgScore ?? 0}/100
+                    </span>
+                    <span className="rounded-full bg-slate-border/40 text-slate-400 px-3 py-1 font-semibold">
+                      {activeContest.overall?.studentCount ?? 0} students
+                    </span>
+                    {activeContest.isCurrent && (
+                      <span className="text-slate-400">
+                        Live scores this week (reset to 0 each Monday).
+                      </span>
+                    )}
+                    {!activeContest.isCurrent && (
+                      <span className="text-amber-glow font-semibold">Archived week</span>
+                    )}
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {(activeContest.byWing || []).map((w, idx) => (
+                      <div
+                        key={w.wing}
+                        className={`rounded-xl border p-4 bg-charcoal-dark/50 space-y-2 ${
+                          idx === 0
+                            ? 'border-amber-glow/40 ring-1 ring-amber-glow/15'
+                            : 'border-slate-border'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className="font-bold text-white text-sm">{w.wing}</span>
+                          {idx === 0 && (
+                            <Crown className="h-3.5 w-3.5 text-amber-glow fill-amber-glow" />
+                          )}
+                        </div>
+                        <div className="flex items-end justify-between">
+                          <div>
+                            <span className="text-[10px] text-slate-500 uppercase font-semibold block">
+                              Avg clean plate
+                            </span>
+                            <span className="text-2xl font-black text-white">
+                              {w.avgScore ?? 0}
+                              <span className="text-sm text-slate-500 font-semibold">/100</span>
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            {w.studentCount ?? 0} students
+                          </span>
+                        </div>
+                        {(w.avgScore ?? 0) >= 90 ? (
+                          <span className="inline-flex text-[9px] font-black uppercase tracking-wider text-emerald-primary">
+                            Feast eligible
+                          </span>
+                        ) : (
+                          <span className="inline-flex text-[9px] font-black uppercase tracking-wider text-terracotta">
+                            Need {90 - (w.avgScore ?? 0)} pts
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          )}
 
           {loading ? (
             <div className="py-24 flex flex-col items-center justify-center gap-3">
