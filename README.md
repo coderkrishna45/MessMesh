@@ -130,16 +130,18 @@ Host the public demo as a separate deployment and database. Set:
 
 ```env
 DEMO_MODE=true
-DEMO_MONGODB_URI=mongodb+srv://USER:PASSWORD@CLUSTER/messmesh_demo
-REAL_DATABASE_NAME=messmesh
 NEXT_PUBLIC_DEMO_MODE=true
+DEMO_MONGODB_URI=mongodb+srv://USER:PASSWORD@CLUSTER/messmesh_demo
+REAL_DATABASE_NAME=<private-application-database-name-only>
 NEXTAUTH_URL=https://your-demo-host.example
 NEXTAUTH_SECRET=<unique demo-only secret>
-ENABLE_DATE_SIMULATION=true
-NEXT_PUBLIC_ENABLE_DATE_SIMULATION=true
+ENABLE_DATE_SIMULATION=false
+NEXT_PUBLIC_ENABLE_DATE_SIMULATION=false
 ```
 
-`DEMO_MONGODB_URI` must use a distinct database whose name contains `demo`; `REAL_DATABASE_NAME` must name the real application database. The application fails closed if this configuration is incomplete or conflicting. Do not copy real data or credentials into the demo database. The login page then shows three server-authenticated fictional entry buttons.
+`DEMO_MONGODB_URI` must use a distinct database whose name contains `demo`; `REAL_DATABASE_NAME` is only the private application database name, not a URI or credential. Leave `MONGODB_URI` unset on the demo service, and never copy the private app's database credentials or authentication secret there. The application fails closed if demo configuration is incomplete or conflicting. The login page then shows three server-authenticated fictional entry buttons.
+
+Date simulation is optional. Leave both flags false or unset for real server time, or set both to `true` to enable the demo date controls. The initializer seeds a menu for the current server week in real-time mode and for the fixed demo week in simulation mode.
 
 Initialize or periodically restore only the isolated demo database:
 
@@ -147,7 +149,7 @@ Initialize or periodically restore only the isolated demo database:
 npm run demo:reset
 ```
 
-This command additionally requires `DEMO_RESET_CONFIRM=YES_DEMO_RESET` and refuses a non-demo or same-name database. Schedule it against the demo deployment (for example, weekly during a quiet period), never against production. The legacy `npm run seed` and `/api/seed` are destructive, separate from this demo reset, and disabled in production and demo deployments. In a non-production environment they require explicit `ALLOW_DB_SEED=true` and a dedicated `SEED_SECRET`; never use them on an existing database.
+This command additionally requires `DEMO_RESET_CONFIRM=YES_DEMO_RESET` and refuses a non-demo or same-name database. It clears and recreates the weekly-score state and menu-initialization lock records along with fictional demo data. For a Free Render service, run it once from a clean local checkout with only demo database settings in the environment; do not rely on Dashboard Shell access. Schedule it only against the dedicated demo database and only if periodically erasing recruiter-created activity is intended. The legacy `npm run seed` and `/api/seed` are destructive, separate from this demo reset, and disabled in production and demo deployments. In a non-production environment they require explicit `ALLOW_DB_SEED=true` and a dedicated `SEED_SECRET`; never use them on an existing database.
 
 ### Recruiter walkthrough
 

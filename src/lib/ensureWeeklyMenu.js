@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import Dish from '@/lib/models/Dish';
-import WeeklyMenu from '@/lib/models/WeeklyMenu';
-import WeeklyMenuInitialization from '@/lib/models/WeeklyMenuInitialization';
-import { DISHES_CATALOG, PREMIUM_DISH_NAMES } from '@/lib/dishesCatalog';
-import { formatISODate, getMondayUTC } from '@/lib/weekUtils';
+import Dish from './models/Dish.js';
+import WeeklyMenu from './models/WeeklyMenu.js';
+import WeeklyMenuInitialization from './models/WeeklyMenuInitialization.js';
+import { DISHES_CATALOG, PREMIUM_DISH_NAMES } from './dishesCatalog.js';
+import { formatISODate, getMondayUTC } from './weekUtils.js';
 
 const WEEKDAYS = [
   'Monday',

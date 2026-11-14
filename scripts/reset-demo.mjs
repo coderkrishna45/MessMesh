@@ -1,10 +1,48 @@
-import { loadEnvConfig } from '@next/env';
+import nextEnv from '@next/env';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import { randomBytes } from 'node:crypto';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { safeDemoDatabase } from '../src/lib/accessPolicy.js';
+import { isDateSimulationEnabled } from '../src/lib/applicationTime.js';
+import { ensureWeeklyMenu } from '../src/lib/ensureWeeklyMenu.js';
+import { ensureWeeklyScorePeriod } from '../src/lib/weeklyScoreReset.js';
+import { getMondayUTC } from '../src/lib/weekUtils.js';
 
-loadEnvConfig(process.cwd());
+const { loadEnvConfig } = nextEnv;
+
+export function getDemoResetDate(environment = process.env, now = new Date()) {
+  return isDateSimulationEnabled(environment)
+    ? new Date(Date.UTC(2026, 6, 15))
+    : new Date(now);
+}
+
+export async function clearDemoCollections(models) {
+  await Promise.all([
+    models.User.deleteMany({}),
+    models.Dish.deleteMany({}),
+    models.WeeklyPoll.deleteMany({}),
+    models.WeeklyMenu.deleteMany({}),
+    models.WasteLog.deleteMany({}),
+    models.MealRating.deleteMany({}),
+    models.SystemState.deleteMany({}),
+    models.WeeklyScoreSnapshot.deleteMany({}),
+    models.WeeklyScoreState.deleteMany({}),
+    models.WeeklyMenuInitialization.deleteMany({}),
+    models.AccountAudit.deleteMany({}),
+    models.AccountSetupToken.deleteMany({}),
+    models.RateLimitBucket.deleteMany({}),
+  ]);
+}
+
+export async function initializeDemoWeek(date, {
+  initializeScorePeriod = ensureWeeklyScorePeriod,
+  initializeMenu = ensureWeeklyMenu,
+} = {}) {
+  await initializeScorePeriod(date);
+  await initializeMenu(getMondayUTC(date));
+}
 
 function databaseIdentity(uri) {
   try {
@@ -17,6 +55,8 @@ function databaseIdentity(uri) {
 }
 
 async function main() {
+  loadEnvConfig(process.cwd());
+
   if (
     process.env.DEMO_MODE !== 'true' ||
     process.env.DEMO_RESET_CONFIRM !== 'YES_DEMO_RESET'
@@ -40,6 +80,8 @@ async function main() {
     { default: MealRating },
     { default: SystemState },
     { default: WeeklyScoreSnapshot },
+    { default: WeeklyScoreState },
+    { default: WeeklyMenuInitialization },
     { default: AccountAudit },
     { default: AccountSetupToken },
     { default: RateLimitBucket },
@@ -53,25 +95,29 @@ async function main() {
     import('../src/lib/models/MealRating.js'),
     import('../src/lib/models/SystemState.js'),
     import('../src/lib/models/WeeklyScoreSnapshot.js'),
+    import('../src/lib/models/WeeklyScoreState.js'),
+    import('../src/lib/models/WeeklyMenuInitialization.js'),
     import('../src/lib/models/AccountAudit.js'),
     import('../src/lib/models/AccountSetupToken.js'),
     import('../src/lib/models/RateLimitBucket.js'),
     import('../src/lib/dishesCatalog.js'),
   ]);
 
-  await Promise.all([
-    User.deleteMany({}),
-    Dish.deleteMany({}),
-    WeeklyPoll.deleteMany({}),
-    WeeklyMenu.deleteMany({}),
-    WasteLog.deleteMany({}),
-    MealRating.deleteMany({}),
-    SystemState.deleteMany({}),
-    WeeklyScoreSnapshot.deleteMany({}),
-    AccountAudit.deleteMany({}),
-    AccountSetupToken.deleteMany({}),
-    RateLimitBucket.deleteMany({}),
-  ]);
+  await clearDemoCollections({
+    User,
+    Dish,
+    WeeklyPoll,
+    WeeklyMenu,
+    WasteLog,
+    MealRating,
+    SystemState,
+    WeeklyScoreSnapshot,
+    WeeklyScoreState,
+    WeeklyMenuInitialization,
+    AccountAudit,
+    AccountSetupToken,
+    RateLimitBucket,
+  });
 
   const passwordHash = await bcrypt.hash(randomBytes(32).toString('base64url'), 12);
   const entryAccounts = await User.create([
@@ -116,44 +162,27 @@ async function main() {
       isDemoData: true,
     }))
   );
+  const seedDate = getDemoResetDate();
+  const monday = getMondayUTC(seedDate);
   await SystemState.create({
-    simulatedDate: new Date(Date.UTC(2026, 6, 15)),
+    simulatedDate: seedDate,
   });
 
-  const dishes = await Dish.create(DISHES_CATALOG);
-  const byCategory = {
-    BREAKFAST: dishes.filter((dish) => dish.category === 'BREAKFAST'),
-    LUNCH: dishes.filter((dish) => dish.category === 'LUNCH'),
-    SNACKS: dishes.filter((dish) => dish.category === 'SNACKS'),
-    DINNER: dishes.filter((dish) => dish.category === 'DINNER'),
-  };
-  const monday = new Date(Date.UTC(2026, 6, 13));
-  const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-  const mealTypes = ['BREAKFAST', 'LUNCH', 'SNACKS', 'DINNER'];
-  const menu = [];
-  weekdays.forEach((dayOfWeek, dayIndex) => {
-    mealTypes.forEach((mealType, mealIndex) => {
-      const pool = byCategory[mealType];
-      menu.push({
-        weekStartDate: monday,
-        dayOfWeek,
-        mealType,
-        dish: pool[(dayIndex + mealIndex) % pool.length]._id,
-        wing: 'ALL',
-      });
-    });
-  });
-  await WeeklyMenu.create(menu);
+  await Dish.create(DISHES_CATALOG);
+  await initializeDemoWeek(seedDate);
+  const dishes = await Dish.find({});
   await WeeklyPoll.create({
     weekStartDate: monday,
     status: 'ACTIVE',
     dishes: dishes.map((dish) => ({ dish: dish._id, votes: 0, voters: [] })),
   });
 
+  const activityDate = new Date(seedDate);
+  activityDate.setUTCDate(activityDate.getUTCDate() - 1);
   const activity = sampleStudents.map((student, index) => ({
     user: student._id,
     dish: dishes[index % dishes.length]._id,
-    date: new Date(Date.UTC(2026, 6, 14)),
+    date: activityDate,
     wasteLevel: 1 + (index % 5),
     imageUrl: '',
     wing: student.wing,
@@ -172,11 +201,16 @@ async function main() {
   console.log(`Protected demo entry accounts initialized: ${entryAccounts.length}.`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error.message);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    if (mongoose.connection.readyState) await mongoose.disconnect();
-  });
+if (
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === resolve(process.argv[1])
+) {
+  main()
+    .catch((error) => {
+      console.error(error.message);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      if (mongoose.connection.readyState) await mongoose.disconnect();
+    });
+}

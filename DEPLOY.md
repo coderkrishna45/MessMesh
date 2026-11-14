@@ -75,12 +75,17 @@ MessMesh uses a **custom Node server + Socket.io**. Use one of:
 
 ### Example: Render
 
-1. [https://render.com](https://render.com) → **New** → **Web Service** → connect repo.
-2. **Runtime:** Node  
-3. **Build:** `npm install && npm run build`  
-4. **Start:** `npm start`  
-5. Add env vars (Step 4).  
-6. Create service → wait for live URL.
+For the public portfolio demo, create a **separate** Render Web Service:
+
+1. In Render, choose **New → Web Service**, connect `coderkrishna45/MessMesh`, and select branch `feat/secure-role-account-management` after confirming it contains the reviewed commit.
+2. Set **Runtime** to Node and choose a region near the demo database and expected visitors.
+3. Set **Build Command** to `npm ci && npm run build`.
+4. Set **Start Command** to `npm start`. This starts `server.js`, which serves Next.js and Socket.IO together.
+5. Choose **Free** if you are only previewing without a paid resource. Render supports WebSockets on web services, but a Free service sleeps after 15 minutes without inbound traffic and can take about a minute to wake. Do not select a paid plan until you explicitly approve one.
+6. Add the separate-demo environment variables from Step 6 before the first build. Set `HOSTNAME=0.0.0.0`; Render supplies `PORT`, so do not hardcode it.
+7. Create the service and wait for its public `https://<service-name>.onrender.com` URL. Set that exact URL as `NEXTAUTH_URL` (no trailing slash), then redeploy if it was not available before the first build.
+
+Do not copy the private application's `MONGODB_URI` or credentials to this service. The demo must use only its dedicated `DEMO_MONGODB_URI`.
 
 ---
 
@@ -114,22 +119,54 @@ Existing records remain active by default and existing password-change state is 
 
 ## Step 6 — Separate public portfolio demo
 
-Use a distinct deployment and database. Do not copy real data or reuse production credentials. Configure these values on the demo service before building:
+Use a distinct Render Web Service and a database created specifically for fictional demo data. Create a separate database user restricted to read/write access on that demo database. Do not copy real data or private-application database credentials. Configure these values on the demo service before building:
 
 ```env
 DEMO_MODE=true
-DEMO_MONGODB_URI=mongodb+srv://USER:PASSWORD@CLUSTER/messmesh_demo
-REAL_DATABASE_NAME=messmesh
 NEXT_PUBLIC_DEMO_MODE=true
-NEXTAUTH_URL=https://your-demo-host.example
-NEXTAUTH_SECRET=<unique demo-only secret>
-ENABLE_DATE_SIMULATION=true
-NEXT_PUBLIC_ENABLE_DATE_SIMULATION=true
+DEMO_MONGODB_URI=mongodb+srv://<demo-only-user>:<url-encoded-password>@<demo-cluster>/messmesh_demo?retryWrites=true&w=majority
+REAL_DATABASE_NAME=<private-application-database-name-only>
+NEXTAUTH_URL=https://<render-service-name>.onrender.com
+NEXTAUTH_SECRET=<unique-random-demo-only-secret>
+HOSTNAME=0.0.0.0
+ENABLE_DATE_SIMULATION=false
+NEXT_PUBLIC_ENABLE_DATE_SIMULATION=false
 ```
 
-The demo DB name must contain `demo`, differ from `REAL_DATABASE_NAME`, and must not match `MONGODB_URI` if that variable is also configured. If configuration is missing or unsafe, demo mode fails closed. Configure invitation delivery only for real deployments; demo invitations are previews and never send email.
+The demo DB name must contain `demo` and differ from `REAL_DATABASE_NAME`. `REAL_DATABASE_NAME` is only the private database's name; it is not a URI or credential. Leave `MONGODB_URI`, `MAIL_DELIVERY_URL`, and `MAIL_DELIVERY_TOKEN` unset on the demo service. The app selects `DEMO_MONGODB_URI`; it never needs credentials for the private application database. Generate a unique `NEXTAUTH_SECRET` for this demo only and enter it directly in Render's secret environment-variable field. Do not reuse the private app's secret.
 
-Initialize or periodically restore the shared fictional dataset using `npm run demo:reset` in the demo service. It requires `DEMO_RESET_CONFIRM=YES_DEMO_RESET` and refuses a non-demo database. Schedule the command only against the dedicated demo database (for example, weekly). It is separate from the legacy `/api/seed` endpoint.
+For real-time demo behavior, leave both date-simulation flags `false` or unset. To explicitly enable the date simulator, set **both** `ENABLE_DATE_SIMULATION=true` and `NEXT_PUBLIC_ENABLE_DATE_SIMULATION=true`; the guarded initializer then seeds the fixed demo date. With simulation disabled, it seeds a menu for the current server week. The two flags must agree so the UI and server stay consistent.
+
+Keep `DEMO_RESET_CONFIRM` unset on the running web service. The initializer requires `DEMO_MODE=true`, both demo-mode flags, a dedicated demo-named `DEMO_MONGODB_URI`, `REAL_DATABASE_NAME`, and a one-command `DEMO_RESET_CONFIRM=YES_DEMO_RESET`. It clears and recreates data only in the database named by `DEMO_MONGODB_URI`, including weekly score state and menu initialization locks. It is separate from `/api/seed`; never use the legacy seed command.
+
+### One-time demo initialization
+
+Render's Dashboard Shell is unavailable on Free Web Services. Run the initializer once from a trusted local **clean checkout** of the reviewed branch (without a `.env.local` containing private database settings), after creating the dedicated demo database and user. This does not deploy or connect to the private application database. From the repository root in PowerShell:
+
+```powershell
+npm ci
+$env:DEMO_MODE = "true"
+$env:NEXT_PUBLIC_DEMO_MODE = "true"
+$env:DEMO_MONGODB_URI = "mongodb+srv://<demo-only-user>:<url-encoded-password>@<demo-cluster>/messmesh_demo?retryWrites=true&w=majority"
+$env:REAL_DATABASE_NAME = "<private-application-database-name-only>"
+$env:DEMO_RESET_CONFIRM = "YES_DEMO_RESET"
+$env:ENABLE_DATE_SIMULATION = "false"
+$env:NEXT_PUBLIC_ENABLE_DATE_SIMULATION = "false"
+npm run demo:reset
+Remove-Item Env:DEMO_RESET_CONFIRM, Env:DEMO_MONGODB_URI, Env:REAL_DATABASE_NAME, Env:DEMO_MODE, Env:NEXT_PUBLIC_DEMO_MODE, Env:ENABLE_DATE_SIMULATION, Env:NEXT_PUBLIC_ENABLE_DATE_SIMULATION -ErrorAction SilentlyContinue
+```
+
+Use the two date-simulation values as described above. Confirm the command reports the fictional demo database name and three protected entry accounts. Then remove the temporary reset confirmation and database variables from that PowerShell session. The command is intentionally destructive to the selected **demo** database; run it once for first initialization, and only repeat it when you intend to erase and restore all public demo activity.
+
+Do not configure a recurring reset until you explicitly choose its cadence and accept that it will erase recruiter-created demo activity. Render Cron Jobs are a separate, non-Free service; if you later approve one, configure the same demo-only environment and `DEMO_RESET_CONFIRM=YES_DEMO_RESET` on that job, and run `npm run demo:reset`. Do not point it at the private app database.
+
+### Post-deploy demo checklist
+
+- Sign in through **Explore as Admin**; open Wardens, Students, Analytics, Leaderboard, and the shared menu. Create a fictional Warden and confirm the invitation is a preview, not email.
+- Sign out, enter as **Warden**, and verify the assigned-wing roster/analytics, student creation and CSV flow, reports, and cross-wing denial.
+- Sign out, enter as **Student**, then check the shared menu/leaderboard, submit a rating, log waste, and view personal score/history.
+- Check role/wing-appropriate notifications and report/PDF workflows where available.
+- Sign out and switch between all three demo roles; confirm the demo entry accounts remain protected from password, role, wing, and active-status changes.
 
 ---
 
@@ -181,7 +218,7 @@ Open http://localhost:3000 and verify that public demo entry buttons are absent 
 
 | Symptom | Fix |
 |---|---|
-| App never becomes “Live” on Railway | Start command must be `npm start` (not only `next start` without custom server if you need sockets) |
+| App never becomes “Live” | Start command must be `npm start` (not `next start`; the custom server also hosts sockets) |
 | Auth redirect loops | `NEXTAUTH_URL` must exactly match public HTTPS URL |
 | DB connection error | Check Atlas password encoding (`@` in password → `%40`), IP allowlist |
 | Seed returns 403 | The legacy destructive seed is unavailable in production/demo; do not unlock it on an existing database |
