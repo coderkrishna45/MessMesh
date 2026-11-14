@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import dbConnect from '@/lib/db';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
-import Dish from '@/lib/models/Dish';
 import { authOptions } from '@/lib/auth';
 import { getCurrentUser, VALID_WINGS } from '@/lib/authorization';
 import { getApplicationTime } from '@/lib/applicationTime';
@@ -79,19 +78,6 @@ export async function GET(req) {
         menuItems.push(match);
       }
     });
-
-    // Fallback when no WeeklyMenu rows exist for this week
-    if (menuItems.length === 0) {
-      const defaultDishes = await Dish.find({}).limit(4);
-      const mockTypes = ['BREAKFAST', 'LUNCH', 'SNACKS', 'DINNER'];
-      
-      menuItems = defaultDishes.map((dish, i) => ({
-        weekStartDate,
-        dayOfWeek: dayOfWeekName,
-        mealType: mockTypes[i] || 'LUNCH',
-        dish: dish,
-      }));
-    }
 
     return NextResponse.json({
       success: true,
