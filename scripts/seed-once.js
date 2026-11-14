@@ -30,7 +30,15 @@ function loadEnvLocal() {
 loadEnvLocal();
 
 const port = process.env.PORT || 3000;
-const secret = process.env.SEED_SECRET || process.env.NEXTAUTH_SECRET || '';
+const secret = process.env.SEED_SECRET || '';
+if (process.env.NODE_ENV === 'production') {
+  console.error('Legacy destructive seeding is disabled in production.');
+  process.exit(1);
+}
+if (process.env.DEMO_MODE === 'true' || process.env.ALLOW_DB_SEED !== 'true' || !secret) {
+  console.error('Legacy destructive seeding is disabled. It requires a non-production environment, ALLOW_DB_SEED=true, and a dedicated SEED_SECRET.');
+  process.exit(1);
+}
 
 const headers = { Accept: 'application/json' };
 if (secret) headers['x-seed-secret'] = secret;

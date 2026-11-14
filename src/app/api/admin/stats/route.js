@@ -3,36 +3,55 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import WeeklyPoll from '@/lib/models/WeeklyPoll';
 import WasteLog from '@/lib/models/WasteLog';
-import SystemState from '@/lib/models/SystemState';
 import MealRating from '@/lib/models/MealRating';
+import { requireRoles } from '@/lib/authorization';
+import { getApplicationTime, scoreForApplicationWeek } from '@/lib/applicationTime';
+import { getMondayUTC } from '@/lib/weekUtils';
 
 // GET: Hostel-wide stats, wing breakdowns, dish rankings, and waste forecast
 export async function GET() {
   try {
     await dbConnect();
 
-    const totalStudents = await User.countDocuments({ role: 'STUDENT' });
+    const { user, response } = await requireRoles(['ADMIN', 'WARDEN']);
+    if (response) return response;
+    const studentsFilter = { role: 'STUDENT', active: { $ne: false } };
+    const wasteFilter = {};
+    if (user.role === 'WARDEN') {
+      studentsFilter.wing = user.wing;
+      wasteFilter.wing = user.wing;
+    }
+    const wingStudents = await User.find(studentsFilter).select('_id').lean();
+    const studentIds = wingStudents.map((student) => student._id);
+    const totalStudents = studentIds.length;
     const totalVotes = await WeeklyPoll.aggregate([
       { $match: { status: 'ACTIVE' } },
       { $unwind: '$dishes' },
-      { $group: { _id: null, total: { $sum: '$dishes.votes' } } },
+      ...(user.role === 'WARDEN'
+        ? [
+            {
+              $project: {
+                wingVotes: {
+                  $size: {
+                    $setIntersection: [
+                      { $ifNull: ['$dishes.voters', []] },
+                      studentIds,
+                    ],
+                  },
+                },
+              },
+            },
+            { $group: { _id: null, total: { $sum: '$wingVotes' } } },
+          ]
+        : [{ $group: { _id: null, total: { $sum: '$dishes.votes' } } }]),
     ]);
     const totalVotesCount = totalVotes.length > 0 ? totalVotes[0].total : 0;
 
-    let state = await SystemState.findOne();
-    if (!state) {
-      state = await SystemState.create({});
-    }
-
     const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const simDate = new Date(state.simulatedDate);
-    const dayOfWeekName = weekdays[simDate.getUTCDay()];
+    const applicationTime = await getApplicationTime();
+    const dayOfWeekName = weekdays[applicationTime.getUTCDay()];
 
-    // Current week range (Monday → Sunday) based on simulated date (UTC)
-    const day = simDate.getUTCDay();
-    const mondayOffset = day === 0 ? -6 : 1 - day;
-    const weekStart = new Date(Date.UTC(simDate.getUTCFullYear(), simDate.getUTCMonth(), simDate.getUTCDate() + mondayOffset));
-    weekStart.setUTCHours(0, 0, 0, 0);
+    const weekStart = getMondayUTC(applicationTime);
     const weekEnd = new Date(weekStart);
     weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
     weekEnd.setUTCHours(23, 59, 59, 999);
@@ -42,22 +61,26 @@ export async function GET() {
       start: formatISODate(weekStart),
       end: formatISODate(weekEnd),
       label: `${formatISODate(weekStart)} → ${formatISODate(weekEnd)}`,
-      currentDate: formatISODate(simDate),
+      currentDate: formatISODate(applicationTime),
       dayOfWeekName,
     };
 
-    const allLogs = await WasteLog.find({});
+    const allLogs = await WasteLog.find(wasteFilter);
     const totalLogs = allLogs.length;
 
     const totalWasteSum = allLogs.reduce((acc, curr) => acc + (curr.wasteLevel || 0), 0);
     const avgWasteIndex = totalLogs > 0 ? parseFloat((totalWasteSum / totalLogs).toFixed(1)) : 0;
 
-    const allStudents = await User.find({ role: 'STUDENT' });
+    const allStudents = await User.find(studentsFilter);
     const totalStudentsCount = allStudents.length;
-    const totalScoresSum = allStudents.reduce((acc, curr) => acc + curr.cleanPlateScore, 0);
-    const avgScore = totalStudentsCount > 0 ? Math.round(totalScoresSum / totalStudentsCount) : 100;
+    const totalScoresSum = allStudents.reduce(
+      (acc, student) => acc + scoreForApplicationWeek(student, applicationTime),
+      0
+    );
+    const avgScore = totalStudentsCount > 0 ? Math.round(totalScoresSum / totalStudentsCount) : 0;
 
     const wingWasteRaw = await WasteLog.aggregate([
+      { $match: wasteFilter },
       {
         $group: {
           _id: '$wing',
@@ -67,7 +90,10 @@ export async function GET() {
       },
     ]);
 
-    const wingsList = ['A-Wing', 'B-Wing', 'C-Wing', 'D-Wing'];
+    const wingsList =
+      user.role === 'WARDEN'
+        ? [user.wing]
+        : ['A-Wing', 'B-Wing', 'C-Wing', 'D-Wing'];
     const wingWaste = wingsList.map((w) => {
       const match = wingWasteRaw.find((r) => r._id === w);
       return {
@@ -77,24 +103,17 @@ export async function GET() {
       };
     });
 
-    const wingScoresRaw = await User.aggregate([
-      { $match: { role: 'STUDENT' } },
-      {
-        $group: {
-          _id: '$wing',
-          avgScore: { $avg: '$cleanPlateScore' },
-          studentCount: { $sum: 1 },
-        },
-      },
-    ]);
-
     const wingScores = wingsList
-      .map((w) => {
-        const match = wingScoresRaw.find((r) => r._id === w);
+      .map((wing) => {
+        const students = allStudents.filter((student) => student.wing === wing);
+        const total = students.reduce(
+          (sum, student) => sum + scoreForApplicationWeek(student, applicationTime),
+          0
+        );
         return {
-          wing: w,
-          avgScore: match ? Math.round(match.avgScore) : 100,
-          studentCount: match ? match.studentCount : 0,
+          wing,
+          avgScore: students.length ? Math.round(total / students.length) : 0,
+          studentCount: students.length,
         };
       })
       .sort((a, b) => b.avgScore - a.avgScore);
@@ -103,6 +122,7 @@ export async function GET() {
     const weekLogsAgg = await WasteLog.aggregate([
       {
         $match: {
+          ...wasteFilter,
           date: { $gte: weekStart, $lte: weekEnd },
         },
       },
@@ -120,6 +140,7 @@ export async function GET() {
       weekLogsAgg.length > 0
         ? weekLogsAgg
         : await WasteLog.aggregate([
+            { $match: wasteFilter },
             {
               $group: {
                 _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
@@ -142,7 +163,10 @@ export async function GET() {
       };
     });
 
+    const ratingFilter =
+      user.role === 'WARDEN' ? { user: { $in: studentIds } } : {};
     const dishRatingsRaw = await MealRating.aggregate([
+      { $match: ratingFilter },
       {
         $group: {
           _id: '$dish',
@@ -230,6 +254,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      scope: user.role === 'WARDEN' ? user.wing : 'HOSTEL',
       stats: {
         totalStudents,
         totalVotes: totalVotesCount,

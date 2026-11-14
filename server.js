@@ -3,11 +3,14 @@ const { parse } = require('url');
 const next = require('next');
 const { Server } = require('socket.io');
 const { loadEnvConfig } = require('@next/env');
+const { getToken } = require('next-auth/jwt');
+const { socketRoomsFor } = require('./src/lib/accessPolicy.js');
 
 // Load .env / .env.local before reading PORT / secrets (required for custom server)
 loadEnvConfig(process.cwd());
 
 const dev = process.env.NODE_ENV !== 'production';
+if (!process.env.NODE_ENV) process.env.NODE_ENV = dev ? 'development' : 'production';
 const port = parseInt(process.env.PORT || '3000', 10);
 
 // Next.js hostname is used for asset/HMR URLs — keep browser-reachable (localhost).
@@ -35,6 +38,18 @@ function getAllowedOrigins() {
     list.add('http://127.0.0.1:3000');
   }
   return [...list];
+}
+
+function parseCookies(cookieHeader = '') {
+  const cookies = Object.create(null);
+  for (const part of cookieHeader.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 1) continue;
+    const name = part.slice(0, separator).trim();
+    if (Object.prototype.hasOwnProperty.call(cookies, name)) continue;
+    cookies[name] = decodeURIComponent(part.slice(separator + 1).trim());
+  }
+  return cookies;
 }
 
 function printPortInUseHelp() {
@@ -82,18 +97,55 @@ app.prepare().then(() => {
 
   global.io = io;
 
+  io.use(async (socket, nextSocket) => {
+    try {
+      if (!process.env.NEXTAUTH_SECRET) throw new Error('Socket authentication is unavailable.');
+      const cookies = parseCookies(socket.request.headers.cookie);
+      const token = await getToken({
+        req: {
+          headers: socket.request.headers,
+          cookies,
+        },
+        secret: process.env.NEXTAUTH_SECRET,
+      });
+      if (!token?.id) throw new Error('Unauthenticated socket.');
+
+      const { default: dbConnect } = await import('./src/lib/db.js');
+      await dbConnect();
+      const { default: User } = await import('./src/lib/models/User.js');
+      const user = await User.findById(token.id).select(
+        'role wing active authVersion needsPasswordChange'
+      );
+      if (
+        !user ||
+        user.active === false ||
+        user.needsPasswordChange ||
+        (token.authVersion ?? 0) !== (user.authVersion ?? 0)
+      ) {
+        throw new Error('Socket session is no longer valid.');
+      }
+
+      socket.data.user = {
+        id: user._id.toString(),
+        role: user.role,
+        wing: user.wing,
+      };
+      const rooms = socketRoomsFor({
+        id: user._id.toString(),
+        role: user.role,
+        wing: user.wing,
+      });
+      for (const room of rooms) {
+        socket.join(room);
+      }
+      nextSocket();
+    } catch {
+      nextSocket(new Error('Authentication required.'));
+    }
+  });
+
   io.on('connection', (socket) => {
     if (dev) console.log(`[Socket] Connected: ${socket.id}`);
-
-    socket.on('join-poll', (pollId) => {
-      socket.join(pollId);
-    });
-
-    socket.on('cast-vote', (data) => {
-      if (data?.pollId) {
-        socket.to(data.pollId).emit('vote-tallied', data);
-      }
-    });
 
     socket.on('disconnect', () => {
       if (dev) console.log(`[Socket] Disconnected: ${socket.id}`);

@@ -17,8 +17,24 @@ const UserSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['STUDENT', 'WARDEN'],
+      enum: ['ADMIN', 'STUDENT', 'WARDEN'],
       default: 'STUDENT',
+    },
+    active: {
+      type: Boolean,
+      default: true,
+    },
+    authVersion: {
+      type: Number,
+      default: 0,
+    },
+    isDemoAccount: {
+      type: Boolean,
+      default: false,
+    },
+    isDemoData: {
+      type: Boolean,
+      default: false,
     },
     wing: {
       type: String,
@@ -26,7 +42,11 @@ const UserSchema = new mongoose.Schema(
     },
     cleanPlateScore: {
       type: Number,
-      default: 100,
+      default: 0, // Weekly contest starts at 0 each Monday; fills to 100 via clean plates
+    },
+    cleanPlateScoreWeekStart: {
+      type: Date,
+      default: null,
     },
     rollNumber: {
       type: String,

@@ -3,6 +3,8 @@ import GoogleProvider from 'next-auth/providers/google';
 import dbConnect from './db';
 import User from './models/User';
 import bcrypt from 'bcryptjs';
+import { checkDemoLimit } from '@/lib/demoLimits';
+import { canUseDemoLogin } from '@/lib/accessPolicy';
 
 const providers = [
   CredentialsProvider({
@@ -10,9 +12,47 @@ const providers = [
     credentials: {
       email: { label: 'Username / Email', type: 'text' },
       password: { label: 'Password', type: 'password' },
+      demoRole: { label: 'Demo role', type: 'text' },
     },
-    async authorize(credentials) {
+    async authorize(credentials, request) {
       await dbConnect();
+
+      if (credentials?.demoRole) {
+        const role = credentials.demoRole;
+        if (
+          process.env.DEMO_MODE !== 'true' ||
+          !['ADMIN', 'WARDEN', 'STUDENT'].includes(role)
+        ) {
+          throw new Error('Demo login is unavailable');
+        }
+        const forwarded =
+          request?.headers?.['x-forwarded-for'] ||
+          request?.headers?.get?.('x-forwarded-for') ||
+          request?.headers?.['x-real-ip'] ||
+          'unknown';
+        const limit = await checkDemoLimit(`login:${String(forwarded).split(',')[0].trim()}`, 12);
+        if (!limit.allowed) throw new Error('Too many demo login attempts. Try again shortly.');
+        const demoUser = await User.findOne({
+          role,
+          isDemoAccount: true,
+          active: { $ne: false },
+        });
+        if (!canUseDemoLogin(process.env, role, demoUser)) {
+          throw new Error('This demo role is not initialized');
+        }
+        return {
+          id: demoUser._id.toString(),
+          name: demoUser.name,
+          email: demoUser.email,
+          role: demoUser.role,
+          wing: demoUser.wing,
+          cleanPlateScore: demoUser.cleanPlateScore,
+          needsPasswordChange: demoUser.needsPasswordChange || false,
+          authVersion: demoUser.authVersion || 0,
+          isDemoAccount: true,
+          isDemoData: demoUser.isDemoData || true,
+        };
+      }
 
       if (!credentials?.email || !credentials?.password) {
         throw new Error('Please enter username/email and password');
@@ -34,6 +74,9 @@ const providers = [
       if (!isValid) {
         throw new Error('Incorrect password');
       }
+      if (user.active === false) {
+        throw new Error('This account is inactive');
+      }
 
       return {
         id: user._id.toString(),
@@ -43,6 +86,9 @@ const providers = [
         wing: user.wing,
         cleanPlateScore: user.cleanPlateScore,
         needsPasswordChange: user.needsPasswordChange || false,
+        authVersion: user.authVersion || 0,
+        isDemoAccount: user.isDemoAccount || false,
+        isDemoData: user.isDemoData || false,
       };
     },
   }),
@@ -68,14 +114,14 @@ export const authOptions = {
         token.wing = user.wing;
         token.cleanPlateScore = user.cleanPlateScore;
         token.needsPasswordChange = user.needsPasswordChange;
+        token.authVersion = user.authVersion;
+        token.isDemoAccount = user.isDemoAccount;
+        token.isDemoData = user.isDemoData;
       }
 
       if (trigger === 'update' && session) {
         if (session.cleanPlateScore !== undefined) {
           token.cleanPlateScore = session.cleanPlateScore;
-        }
-        if (session.needsPasswordChange !== undefined) {
-          token.needsPasswordChange = session.needsPasswordChange;
         }
       }
       return token;
@@ -87,6 +133,9 @@ export const authOptions = {
         session.user.wing = token.wing;
         session.user.cleanPlateScore = token.cleanPlateScore;
         session.user.needsPasswordChange = token.needsPasswordChange;
+        session.user.authVersion = token.authVersion;
+        session.user.isDemoAccount = token.isDemoAccount;
+        session.user.isDemoData = token.isDemoData;
       }
       return session;
     },

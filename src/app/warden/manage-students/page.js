@@ -83,10 +83,14 @@ export default function ManageStudentsPage() {
   const [error, setError] = useState('');
 
   const isWarden = session?.user?.role === 'WARDEN';
+  const isManager = ['ADMIN', 'WARDEN'].includes(session?.user?.role);
 
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login');
-  }, [status, router]);
+    if (status === 'authenticated' && isWarden && session.user.wing) {
+      setManualForm((current) => ({ ...current, wing: session.user.wing }));
+    }
+  }, [status, router, isWarden, session]);
 
   const fetchStudents = useCallback(async () => {
     try {
@@ -109,7 +113,7 @@ export default function ManageStudentsPage() {
 
   useEffect(() => {
     if (status === 'authenticated') {
-      if (session.user.role !== 'WARDEN') {
+      if (!['ADMIN', 'WARDEN'].includes(session.user.role)) {
         router.push('/dashboard');
       } else {
         fetchStudents();
@@ -362,11 +366,11 @@ export default function ManageStudentsPage() {
     }
   };
 
-  // Resets to RollNo@Mess2026 and forces change on next login
+  // Returns a one-time random credential that must be handed to the authorized operator.
   const handleResetPassword = async (studentId) => {
     if (
       !confirm(
-        "Reset this student's password to the default (RollNo@Mess2026)? They will be forced to change it on next login."
+        "Issue a random temporary password for this student? Their current sessions will be invalidated."
       )
     ) {
       return;
@@ -447,7 +451,7 @@ export default function ManageStudentsPage() {
     );
   }
 
-  if (!isWarden) return null;
+  if (!isManager) return null;
 
   const SortHeader = ({ label, colKey, className = '' }) => (
     <th className={`py-3 px-4 ${className}`}>
@@ -477,9 +481,8 @@ export default function ManageStudentsPage() {
                 Manage Students
               </h1>
               <p className="mt-2 text-sm text-slate-400">
-                Add students manually or via CSV, review the roster, and reset
-                credentials. Default password:{' '}
-                <code className="text-amber-glow text-xs">RollNumber@Mess2026</code>
+                Add students manually or via CSV, review the roster, and issue secure
+                temporary credentials. Students must set a personal password on first login.
               </p>
             </div>
 
@@ -533,11 +536,7 @@ export default function ManageStudentsPage() {
                   <div>
                     <h3 className="text-lg font-bold text-white">Register One Student</h3>
                     <p className="text-xs text-slate-400 mt-1">
-                      Username will be the roll number. Default password is{' '}
-                      <span className="text-amber-glow font-mono">
-                        {'{RollNumber}@Mess2026'}
-                      </span>
-                      . Student must change password on first login.
+                      Username will be the roll number. A random temporary password is shown to you once and must be handed securely to the student.
                     </p>
                   </div>
 
@@ -583,11 +582,12 @@ export default function ManageStudentsPage() {
                           Wing *
                         </label>
                         <select
+                          disabled={isWarden}
                           value={manualForm.wing}
                           onChange={(e) =>
                             setManualForm({ ...manualForm, wing: e.target.value })
                           }
-                          className="w-full rounded-xl border border-slate-800 bg-charcoal-dark py-2.5 px-3 text-sm text-white outline-none focus:border-emerald-primary cursor-pointer"
+                          className="w-full rounded-xl border border-slate-800 bg-charcoal-dark py-2.5 px-3 text-sm text-white outline-none focus:border-emerald-primary cursor-pointer disabled:opacity-60"
                         >
                           {WINGS.map((w) => (
                             <option key={w} value={w}>

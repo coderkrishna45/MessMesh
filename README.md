@@ -6,17 +6,9 @@ Built with **Next.js 15** (App Router, JavaScript), **MongoDB + Mongoose**, **Ne
 
 | | |
 |--|--|
-| **Live demo** | [https://messmesh.onrender.com/login](https://messmesh.onrender.com/login) |
 | **Repository** | [github.com/coderkrishna45/MessMesh](https://github.com/coderkrishna45/MessMesh) |
 
-### Live demo login
-
-| Field | Value |
-|-------|--------|
-| Roll number | `123456` |
-| Password | `123456@Mess2026` |
-
-*(After first login, the app may ask you to set a new password.)*
+Public recruiter access is available only from a separately configured demo deployment. No production account credentials are published here.
 
 ---
 
@@ -33,7 +25,7 @@ Built with **Next.js 15** (App Router, JavaScript), **MongoDB + Mongoose**, **Ne
 | **Weekly PDF** | Download professional weekly report (leaderboard, top/bottom dishes, waste, forecast). |
 | **Manage students** | Manual add + CSV bulk upload (PapaParse), roster table, password reset. |
 | **Notifications** | Bell panel + toasts (feast unlock, high waste, date advanced). |
-| **Date simulator** | “Next Day” advances simulated hostel date and auto-logs sample activity. |
+| **Date simulator** | “Next Day” advances time only in explicitly enabled development/demo; weekly scores archive/reset without generating activity. |
 
 ---
 
@@ -94,15 +86,15 @@ npm run dev
 
 Open **http://localhost:3000**
 
-### 4. Seed demo data (optional)
+### 4. Create the first administrator
 
-With the server **already running**:
+After confirming that `MONGODB_URI` points to the intended database, run:
 
 ```bash
-npm run seed
+npm run create-admin
 ```
 
-Or visit **http://localhost:3000/api/seed** once (local dev).
+The command prompts for name, email, and a hidden password. It inserts a new Admin only; it rejects existing email addresses and never promotes or resets existing accounts.
 
 Check DB without starting the app:
 
@@ -112,16 +104,59 @@ npm run check-db
 
 ---
 
-## Demo accounts (after local seed)
+## Roles and account onboarding
 
-| Role | Login | Password |
-|------|--------|----------|
-| Warden (A-Wing) | `warden1@messmesh.com` | `warden123` |
-| Warden (B-Wing) | `warden2@messmesh.com` | `warden123` |
-| Student | `student1@messmesh.com` | `student123` |
-| Student | `student3@messmesh.com` | `student123` |
+| Action | Admin | Warden | Student |
+|---|---:|---:|---:|
+| Manage / assign wardens | Yes | No | No |
+| View management analytics | Hostel-wide | Assigned wing | No |
+| Add/import/reset students | Any validated wing | Assigned wing only | No |
+| Publish shared hostel menu | Yes | No (preview only) | No |
+| Unlock premium wing meals | No | Assigned wing only | No |
+| Rate meals / log waste | No | No | Own account only |
+| View shared menus / leaderboards | Yes | Yes | Yes |
 
-On local `/login`, use the **Developer Tool** quick-login cards (shown only in development builds).
+### Warden onboarding
+
+An Admin creates a Warden from **Wardens** and assigns one of the four valid wings. The setup link is single-use and expires after 24 hours. Configure the optional `MAIL_DELIVERY_URL` / `MAIL_DELIVERY_TOKEN` HTTP integration to deliver it. In development, the UI shows an explicitly labeled invitation preview; this is not email delivery.
+
+### Student onboarding and resets
+
+Wardens create students manually or via the existing CSV preview/import flow. A random temporary password is shown once to the authorized operator for secure handoff; students must choose a new password before protected actions. Password resets use another random temporary credential, invalidate current sessions, and require a password change. Password changes require signing in again.
+
+## Separate public portfolio demo
+
+Host the public demo as a separate deployment and database. Set:
+
+```env
+DEMO_MODE=true
+NEXT_PUBLIC_DEMO_MODE=true
+DEMO_MONGODB_URI=mongodb+srv://USER:PASSWORD@CLUSTER/messmesh_demo
+REAL_DATABASE_NAME=<private-application-database-name-only>
+NEXTAUTH_URL=https://your-demo-host.example
+NEXTAUTH_SECRET=<unique demo-only secret>
+ENABLE_DATE_SIMULATION=false
+NEXT_PUBLIC_ENABLE_DATE_SIMULATION=false
+```
+
+`DEMO_MONGODB_URI` must use a distinct database whose name contains `demo`; `REAL_DATABASE_NAME` is only the private application database name, not a URI or credential. Leave `MONGODB_URI` unset on the demo service, and never copy the private app's database credentials or authentication secret there. The application fails closed if demo configuration is incomplete or conflicting. The login page then shows three server-authenticated fictional entry buttons.
+
+Date simulation is optional. Leave both flags false or unset for real server time, or set both to `true` to enable the demo date controls. The initializer seeds a menu for the current server week in real-time mode and for the fixed demo week in simulation mode.
+
+Initialize or periodically restore only the isolated demo database:
+
+```bash
+npm run demo:reset
+```
+
+This command additionally requires `DEMO_RESET_CONFIRM=YES_DEMO_RESET` and refuses a non-demo or same-name database. It clears and recreates the weekly-score state and menu-initialization lock records along with fictional demo data. For a Free Render service, run it once from a clean local checkout with only demo database settings in the environment; do not rely on Dashboard Shell access. Schedule it only against the dedicated demo database and only if periodically erasing recruiter-created activity is intended. The legacy `npm run seed` and `/api/seed` are destructive, separate from this demo reset, and disabled in production and demo deployments. In a non-production environment they require explicit `ALLOW_DB_SEED=true` and a dedicated `SEED_SECRET`; never use them on an existing database.
+
+### Recruiter walkthrough
+
+1. Select **Explore as Admin** to inspect hostel-wide analytics, create fictional wardens, assign wings, and preview shared-menu publication.
+2. Select **Explore as Warden** to review assigned-wing analytics, add/import fictional students, reset a fictional student's password, and try the wing feast workflow.
+3. Select **Explore as Student** to view the shared menu and leaderboard, rate a meal, log fictional plate waste, and inspect personal rating history.
+4. The persistent demo banner identifies the environment and all displayed activity as fictional.
 
 ---
 
@@ -132,7 +167,11 @@ On local `/login`, use the **Developer Tool** quick-login cards (shown only in d
 | `npm run dev` | Start custom server + Socket.io (development) |
 | `npm run build` | Production Next.js build |
 | `npm start` | Start server after build |
-| `npm run seed` | Call `/api/seed` (server must be running) |
+| `npm run seed` | Legacy destructive seed; non-production only, explicitly gated, never for an existing database |
+| `npm run create-admin` | Safely insert the first administrator interactively |
+| `npm run demo:reset` | Explicitly reset the separately configured demo database |
+| `npm run test:security` | Run focused authorization policy tests |
+| `npm run test:browser` | Run the Admin navigation browser regression test (`TEST_BROWSER=true`, `TEST_HTTP_BASE_URL`) |
 | `npm run check-db` | Test MongoDB connection from `.env.local` |
 | `npm run lint` | ESLint |
 
@@ -145,7 +184,9 @@ MessMesh/
 ├── server.js                 # Custom HTTP + Socket.io server
 ├── scripts/
 │   ├── check-db.js           # DB connectivity check
-│   └── seed-once.js          # One-shot seed HTTP client
+│   ├── seed-once.js          # Explicitly gated legacy destructive seed client
+│   ├── create-admin.mjs      # Interactive first-admin bootstrap
+│   └── reset-demo.mjs        # Demo-only fictional data initialization/reset
 ├── src/
 │   ├── app/                  # App Router pages + API routes
 │   │   ├── login/
@@ -153,7 +194,7 @@ MessMesh/
 │   │   ├── vote/
 │   │   ├── waste-log/
 │   │   ├── leaderboard/
-│   │   ├── admin/            # Warden analytics
+│   │   ├── admin/            # Management analytics and Admin warden management
 │   │   ├── warden/manage-students/
 │   │   └── api/              # REST + seed endpoints
 │   ├── components/           # Navbar, Footer, ForcePasswordChange
@@ -164,16 +205,6 @@ MessMesh/
 ```
 
 ---
-
-## College demo walkthrough
-
-1. Open live site or run `npm run dev` locally  
-2. Log in (live credentials above, or local quick-login)  
-3. **Dashboard** → Download Weekly Report (warden)  
-4. **Students** → add a student or show CSV upload  
-5. **Analytics** → charts, forecast, feast panel  
-6. As student → rate meals, log waste, leaderboard  
-7. Optional: **Next Day** in the navbar to advance simulation  
 
 ---
 
@@ -190,8 +221,6 @@ MessMesh/
 ## Deploy
 
 This app uses a **custom Node server** for Socket.io. Prefer **Railway / Render / Fly** (long-running process), not pure Vercel serverless.
-
-Current production host: **[Render](https://messmesh.onrender.com/login)**
 
 Full production checklist: **[DEPLOY.md](./DEPLOY.md)**
 

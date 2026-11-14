@@ -2,9 +2,10 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import dbConnect from '@/lib/db';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
-import Dish from '@/lib/models/Dish';
-import SystemState from '@/lib/models/SystemState';
 import { authOptions } from '@/lib/auth';
+import { getCurrentUser, VALID_WINGS } from '@/lib/authorization';
+import { getApplicationTime } from '@/lib/applicationTime';
+import { getMondayUTC } from '@/lib/weekUtils';
 
 // GET /api/menu?date=YYYY-MM-DD — daily menu for a wing
 export async function GET(req) {
@@ -13,18 +14,13 @@ export async function GET(req) {
 
     const { searchParams } = new URL(req.url);
     const dateParam = searchParams.get('date');
-    let wingParam = searchParams.get('wing');
+    let wingParam = null;
     
     let targetDate;
     if (dateParam) {
       targetDate = new Date(dateParam);
     } else {
-      // Default to globally synchronized simulated date
-      let state = await SystemState.findOne();
-      if (!state) {
-        state = await SystemState.create({});
-      }
-      targetDate = new Date(state.simulatedDate);
+      targetDate = await getApplicationTime();
     }
 
     if (isNaN(targetDate.getTime())) {
@@ -34,20 +30,22 @@ export async function GET(req) {
       );
     }
 
-    if (!wingParam) {
-      const session = await getServerSession(authOptions);
-      if (session?.user) {
-        wingParam = session.user.wing;
-      }
+    const session = await getServerSession(authOptions);
+    if (session?.user) {
+      const { user, response } = await getCurrentUser();
+      if (response) return response;
+      wingParam =
+        user.role === 'ADMIN'
+          ? searchParams.get('wing') || 'ALL'
+          : user.wing;
+    }
+    if (wingParam && wingParam !== 'ALL' && !VALID_WINGS.includes(wingParam)) {
+      return NextResponse.json({ success: false, error: 'Invalid wing.' }, { status: 400 });
     }
     const activeWing = wingParam || 'ALL';
 
-    // Monday of target date (UTC)
-    const tempDate = new Date(targetDate);
-    const day = tempDate.getUTCDay();
-    const diff = tempDate.getUTCDate() - day + (day === 0 ? -6 : 1);
-    const weekStartDate = new Date(Date.UTC(tempDate.getUTCFullYear(), tempDate.getUTCMonth(), diff));
-    weekStartDate.setHours(0, 0, 0, 0);
+    // Reads never initialize or replace menu data.
+    const weekStartDate = getMondayUTC(targetDate);
 
     const weekdays = [
       'Sunday',
@@ -80,19 +78,6 @@ export async function GET(req) {
         menuItems.push(match);
       }
     });
-
-    // Fallback when no WeeklyMenu rows exist for this week
-    if (menuItems.length === 0) {
-      const defaultDishes = await Dish.find({}).limit(4);
-      const mockTypes = ['BREAKFAST', 'LUNCH', 'SNACKS', 'DINNER'];
-      
-      menuItems = defaultDishes.map((dish, i) => ({
-        weekStartDate,
-        dayOfWeek: dayOfWeekName,
-        mealType: mockTypes[i] || 'LUNCH',
-        dish: dish,
-      }));
-    }
 
     return NextResponse.json({
       success: true,

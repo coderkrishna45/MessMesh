@@ -1,18 +1,24 @@
 import { NextResponse } from 'next/server';
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
+import { getApplicationTime, scoreForApplicationWeek } from '@/lib/applicationTime';
 
 // GET /api/leaderboard — wing and individual Clean Plate Score standings
-export async function GET(req) {
+export async function GET() {
   try {
     await dbConnect();
+    const applicationTime = await getApplicationTime();
 
-    const students = await User.find({ role: 'STUDENT' })
-      .select('name email wing cleanPlateScore')
+    const students = await User.find({ role: 'STUDENT', active: { $ne: false } })
+      .select('name wing cleanPlateScore cleanPlateScoreWeekStart')
       .exec();
+    const scoredStudents = students.map((student) => ({
+      student,
+      cleanPlateScore: scoreForApplicationWeek(student, applicationTime),
+    }));
 
     const wingGroups = {};
-    students.forEach((student) => {
+    scoredStudents.forEach(({ student, cleanPlateScore }) => {
       const wingName = student.wing || 'Unknown';
       if (!wingGroups[wingName]) {
         wingGroups[wingName] = {
@@ -21,7 +27,7 @@ export async function GET(req) {
           studentCount: 0,
         };
       }
-      wingGroups[wingName].totalScore += student.cleanPlateScore || 100;
+      wingGroups[wingName].totalScore += cleanPlateScore;
       wingGroups[wingName].studentCount += 1;
     });
 
@@ -33,18 +39,17 @@ export async function GET(req) {
 
     wingLeaderboard.sort((a, b) => b.avgScore - a.avgScore);
 
-    const studentLeaderboard = [...students];
-    studentLeaderboard.sort((a, b) => (b.cleanPlateScore || 0) - (a.cleanPlateScore || 0));
+    const studentLeaderboard = [...scoredStudents];
+    studentLeaderboard.sort((a, b) => b.cleanPlateScore - a.cleanPlateScore);
 
     return NextResponse.json({
       success: true,
       wingLeaderboard,
-      studentLeaderboard: studentLeaderboard.map((student) => ({
+      studentLeaderboard: studentLeaderboard.map(({ student, cleanPlateScore }) => ({
         id: student._id,
         name: student.name,
-        email: student.email,
         wing: student.wing,
-        cleanPlateScore: student.cleanPlateScore || 0,
+        cleanPlateScore,
       })),
     });
   } catch (error) {

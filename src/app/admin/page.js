@@ -52,6 +52,7 @@ export default function AdminPage() {
   const [loadingData, setLoadingData] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
   const [generatingMenu, setGeneratingMenu] = useState(false);
+  const [initializingMenu, setInitializingMenu] = useState(false);
   const [publishingMenu, setPublishingMenu] = useState(false);
   const [menuSuccessMessage, setMenuSuccessMessage] = useState('');
   const [error, setError] = useState('');
@@ -77,7 +78,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (status === 'authenticated') {
-      if (session.user.role !== 'WARDEN') {
+      if (!['ADMIN', 'WARDEN'].includes(session.user.role)) {
         router.push('/dashboard');
       } else {
         fetchAdminStats();
@@ -162,6 +163,34 @@ export default function AdminPage() {
     }
   };
 
+  const handleInitializeCurrentMenu = async () => {
+    setInitializingMenu(true);
+    setMenuSuccessMessage('');
+    setError('');
+    try {
+      const res = await fetch('/api/admin/generate-menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'initialize' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMenuSuccessMessage(
+          data.initialized
+            ? `Default menu initialized for the week of ${data.weekStartDate}.`
+            : `An existing menu for the week of ${data.weekStartDate} was preserved.`
+        );
+      } else {
+        setError(data.error || 'Menu initialization failed.');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('An error occurred during menu initialization.');
+    } finally {
+      setInitializingMenu(false);
+    }
+  };
+
   const handlePublishMenu = async () => {
     setPublishingMenu(true);
     setMenuSuccessMessage('');
@@ -229,7 +258,7 @@ export default function AdminPage() {
     );
   }
 
-  if (!session || session.user.role !== 'WARDEN') return null;
+  if (!session || !['ADMIN', 'WARDEN'].includes(session.user.role)) return null;
 
   const getRiskColor = (level) => {
     switch (level) {
@@ -343,10 +372,10 @@ export default function AdminPage() {
                 </div>
 
                 <div className="rounded-2xl border border-slate-border bg-slate-card/45 p-6 space-y-1">
-                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold block">Hostel Clean Plate Score</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold block">{session.user.role === 'WARDEN' ? 'Wing Clean Plate Score' : 'Hostel Clean Plate Score'}</span>
                   <span className="text-2xl font-black text-emerald-primary flex items-center gap-2 pt-1">
                     <Sparkles className="h-6 w-6 animate-pulse text-amber-glow" />
-                    {stats?.avgScore || 100}/100
+                    {stats?.avgScore ?? 0}/100
                   </span>
                 </div>
               </div>
@@ -387,7 +416,7 @@ export default function AdminPage() {
                 </div>
               )}
 
-              <div className="rounded-2xl border border-slate-border bg-slate-card/25 p-6 space-y-6">
+              {session.user.role === 'WARDEN' && <div className="rounded-2xl border border-slate-border bg-slate-card/25 p-6 space-y-6">
                 <div className="flex justify-between items-start flex-wrap gap-4 border-b border-slate-border/50 pb-4">
                   <div>
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -400,7 +429,7 @@ export default function AdminPage() {
                   </div>
 
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                    <div className="flex items-center gap-2 rounded bg-charcoal-dark px-3 py-1.5 border border-slate-800 text-xs">
+                    {process.env.NEXT_PUBLIC_ENABLE_DATE_SIMULATION === 'true' && <div className="flex items-center gap-2 rounded bg-charcoal-dark px-3 py-1.5 border border-slate-800 text-xs">
                       <input
                         type="checkbox"
                         id="simSunday"
@@ -411,7 +440,7 @@ export default function AdminPage() {
                       <label htmlFor="simSunday" className="text-[10px] text-slate-500 font-semibold cursor-pointer uppercase tracking-wider select-none">
                         Simulate Saturday Mode
                       </label>
-                    </div>
+                    </div>}
 
                     <button
                       onClick={handleUnlockFeast}
@@ -484,7 +513,7 @@ export default function AdminPage() {
                     );
                   })}
                 </div>
-              </div>
+              </div>}
 
               <div className="grid gap-8 lg:grid-cols-2">
                 <div className="rounded-2xl border border-slate-border bg-slate-card/25 p-6 space-y-4">
@@ -564,7 +593,7 @@ export default function AdminPage() {
                     Compile Next {"Week's"} Menu
                   </h3>
                   <p className="mt-2 text-sm text-slate-400 leading-relaxed">
-                    Compile student preferred dishes ranked by highest taste ratings. Review and approve the generated draft before publishing it to the hostel.
+                    Compile student preferred dishes ranked by highest taste ratings. Administrators may publish the shared hostel menu.
                   </p>
                 </div>
 
@@ -576,20 +605,38 @@ export default function AdminPage() {
                 )}
 
                 {!draftMenu && (
-                  <button
-                    onClick={handlePreviewMenu}
-                    disabled={generatingMenu}
-                    className="w-full rounded-xl bg-emerald-primary hover:bg-emerald-primary/95 text-slate-950 py-3.5 font-bold transition-all flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50 text-xs"
-                  >
-                    {generatingMenu ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 animate-spin text-slate-950" />
-                        Analyzing Taste Votes & Curating Draft...
-                      </>
-                    ) : (
-                      'Generate & Preview Next Week\'s Menu'
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <button
+                      onClick={handlePreviewMenu}
+                      disabled={generatingMenu}
+                      className="w-full rounded-xl bg-emerald-primary hover:bg-emerald-primary/95 text-slate-950 py-3.5 font-bold transition-all flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50 text-xs"
+                    >
+                      {generatingMenu ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin text-slate-950" />
+                          Analyzing Taste Votes & Curating Draft...
+                        </>
+                      ) : (
+                        'Generate & Preview Next Week\'s Menu'
+                      )}
+                    </button>
+                    {session.user.role === 'ADMIN' && (
+                      <button
+                        onClick={handleInitializeCurrentMenu}
+                        disabled={initializingMenu}
+                        className="w-full rounded-xl border border-slate-border bg-slate-card/40 text-white py-3.5 font-bold transition-all flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50 text-xs"
+                      >
+                        {initializingMenu ? (
+                          <>
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            Initializing...
+                          </>
+                        ) : (
+                          'Initialize Empty Current Week'
+                        )}
+                      </button>
                     )}
-                  </button>
+                  </div>
                 )}
               </div>
 
@@ -602,7 +649,7 @@ export default function AdminPage() {
                         Preview Generated Menu (Roster: {draftWeekStart})
                       </h4>
                       <p className="text-xs text-slate-400 mt-1">
-                        Review this rotation. If satisfactory, click &quot;Approve &amp; Publish&quot;.
+                        Review this rotation. Administrators can publish it for the hostel.
                       </p>
                     </div>
                     
@@ -615,7 +662,7 @@ export default function AdminPage() {
                         <XCircle className="h-3.5 w-3.5" /> Cancel
                       </button>
                       
-                      <button
+                      {session.user.role === 'ADMIN' && <button
                         onClick={handlePublishMenu}
                         disabled={publishingMenu}
                         className="rounded-lg bg-emerald-primary hover:bg-emerald-primary/95 text-slate-950 px-4 py-2 text-xs font-bold transition-all flex items-center gap-1 active:scale-[0.98]"
@@ -629,7 +676,7 @@ export default function AdminPage() {
                             Approve & Publish <ArrowRight className="h-3.5 w-3.5" />
                           </>
                         )}
-                      </button>
+                      </button>}
                     </div>
                   </div>
 

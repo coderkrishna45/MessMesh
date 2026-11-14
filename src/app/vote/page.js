@@ -136,7 +136,7 @@ export default function VotePage() {
     if (status === 'authenticated' && !isWarden) {
       fetchHistory(historyOffset);
     }
-  }, [status, historyOffset, isWarden]);
+  }, [status, historyOffset, isWarden, selectedDate]);
 
   useEffect(() => {
     if (status === 'authenticated' && isWarden) {
@@ -187,7 +187,7 @@ export default function VotePage() {
       if (data.success) {
         setMenuItems((prevMenu) => {
           return prevMenu.map((item) => {
-            if (item.dish._id === dishId) {
+            if (item.dish._id === dishId || item.dish._id?.toString() === dishId) {
               return {
                 ...item,
                 userRating: data.userRating,
@@ -198,6 +198,10 @@ export default function VotePage() {
             return item;
           });
         });
+        // Refresh history matrix so stars appear immediately
+        if (!isWarden) {
+          fetchHistory(historyOffset);
+        }
       } else {
         setError(data.error || 'Failed to submit taste rating.');
       }
@@ -285,6 +289,29 @@ export default function VotePage() {
                   ? `Real-time taste rating logs and audit summaries submitted by hostel students for ${dayOfWeekName}.`
                   : `Provide feedback on the taste of the dishes served on ${dayOfWeekName}. Rate multiple dishes as you eat!`
                 }
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-border bg-slate-card/30 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-glow/10 text-amber-glow ring-1 ring-amber-glow/25">
+              <Star className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-bold text-white">Taste ratings stay forever</h4>
+              <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+                Dish star ratings accumulate over time and never weekly-reset.
+                Your <span className="text-emerald-primary font-semibold">Clean Plate Score</span> starts
+                at <strong className="text-white">0 every Monday</strong> and builds with clean plates
+                through Saturday (Sunday feast if wing avg ≥ 90). Past weeks on the{' '}
+                <button
+                  type="button"
+                  onClick={() => router.push('/leaderboard')}
+                  className="text-emerald-primary underline underline-offset-2 font-semibold"
+                >
+                  Leaderboard
+                </button>
+                .
               </p>
             </div>
           </div>
@@ -505,16 +532,17 @@ export default function VotePage() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2 border border-slate-800 bg-charcoal-dark p-1 rounded-xl shrink-0 self-start sm:self-auto">
+                <div className="flex flex-wrap items-center gap-1 border border-slate-800 bg-charcoal-dark p-1 rounded-xl shrink-0 self-start sm:self-auto">
                   {[
-                    { label: 'Current Week', val: 0 },
-                    { label: '1 Week Ago', val: 1 },
-                    { label: '2 Weeks Ago', val: 2 },
+                    { label: 'This Week', val: 0 },
+                    { label: '1 Wk Ago', val: 1 },
+                    { label: '2 Wks Ago', val: 2 },
+                    { label: '3 Wks Ago', val: 3 },
                   ].map((btn) => (
                     <button
                       key={btn.val}
                       onClick={() => setHistoryOffset(btn.val)}
-                      className={`rounded-lg px-3 py-1.5 text-[10px] font-bold transition-all ${
+                      className={`rounded-lg px-2.5 py-1.5 text-[10px] font-bold transition-all ${
                         historyOffset === btn.val
                           ? 'bg-emerald-primary text-slate-950'
                           : 'text-slate-400 hover:text-slate-200'

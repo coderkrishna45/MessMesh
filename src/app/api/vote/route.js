@@ -2,13 +2,16 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import dbConnect from '@/lib/db';
 import WeeklyMenu from '@/lib/models/WeeklyMenu';
-import Dish from '@/lib/models/Dish';
 import MealRating from '@/lib/models/MealRating';
-import User from '@/lib/models/User';
-import SystemState from '@/lib/models/SystemState';
 import { authOptions } from '@/lib/auth';
+import { getMondayUTC, formatISODate } from '@/lib/weekUtils';
+import { getCurrentUser, requireRoles } from '@/lib/authorization';
+import { demoMutationResponse } from '@/lib/demoLimits';
+import { socketEventRoom } from '@/lib/accessPolicy';
+import { applicationDateStart, getApplicationTime } from '@/lib/applicationTime';
 
-// GET /api/vote?date=YYYY-MM-DD — menu dishes with average and user ratings
+// GET /api/vote?date=YYYY-MM-DD — menu dishes with cumulative taste averages
+// (Meal ratings never weekly-reset; Clean Plate Score is separate.)
 export async function GET(req) {
   try {
     await dbConnect();
@@ -18,18 +21,14 @@ export async function GET(req) {
 
     const { searchParams } = new URL(req.url);
     const dateParam = searchParams.get('date');
-    
+
     let targetDate;
     if (dateParam) {
       targetDate = new Date(dateParam);
     } else {
-      let state = await SystemState.findOne();
-      if (!state) {
-        state = await SystemState.create({});
-      }
-      targetDate = new Date(state.simulatedDate);
+      targetDate = await getApplicationTime();
     }
-    targetDate.setUTCHours(0, 0, 0, 0);
+    targetDate = applicationDateStart(targetDate);
 
     if (isNaN(targetDate.getTime())) {
       return NextResponse.json(
@@ -38,27 +37,24 @@ export async function GET(req) {
       );
     }
 
-    // Resolve stale session ID via email after reseeds; also read wing for menu override
     let studentWing = 'ALL';
     if (userId) {
-      let dbUser = await User.findById(userId);
-      if (!dbUser && session?.user?.email) {
-        dbUser = await User.findOne({ email: session.user.email });
-      }
-      if (dbUser) {
-        userId = dbUser._id.toString();
-        studentWing = dbUser.wing || 'ALL';
-      }
+      const { user, response } = await getCurrentUser();
+      if (response) return response;
+      userId = user._id.toString();
+      studentWing = user.wing || 'ALL';
     }
 
-    // Monday weekStartDate (UTC)
-    const tempDate = new Date(targetDate);
-    const day = tempDate.getUTCDay();
-    const diff = tempDate.getUTCDate() - day + (day === 0 ? -6 : 1);
-    const weekStartDate = new Date(Date.UTC(tempDate.getUTCFullYear(), tempDate.getUTCMonth(), diff));
-    weekStartDate.setUTCHours(0, 0, 0, 0);
-
-    const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const weekStartDate = getMondayUTC(targetDate);
+    const weekdays = [
+      'Sunday',
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+    ];
     const dayOfWeekName = weekdays[targetDate.getUTCDay()];
 
     const allWeeklyItems = await WeeklyMenu.find({
@@ -68,39 +64,33 @@ export async function GET(req) {
       .populate('dish')
       .exec();
 
-    // Wing-specific menu overrides ALL
     let menuItems = [];
     const mealSlots = ['BREAKFAST', 'LUNCH', 'SNACKS', 'DINNER'];
-    
+
     mealSlots.forEach((slot) => {
-      let match = allWeeklyItems.find((item) => item.mealType === slot && item.wing === studentWing);
+      let match = allWeeklyItems.find(
+        (item) => item.mealType === slot && item.wing === studentWing
+      );
       if (!match) {
-        match = allWeeklyItems.find((item) => item.mealType === slot && item.wing === 'ALL');
+        match = allWeeklyItems.find(
+          (item) => item.mealType === slot && item.wing === 'ALL'
+        );
       }
       if (match) {
         menuItems.push(match);
       }
     });
 
-    if (menuItems.length === 0) {
-      const defaultDishes = await Dish.find({}).limit(4);
-      const mockTypes = ['BREAKFAST', 'LUNCH', 'SNACKS', 'DINNER'];
-      menuItems = defaultDishes.map((dish, i) => ({
-        weekStartDate,
-        dayOfWeek: dayOfWeekName,
-        mealType: mockTypes[i] || 'LUNCH',
-        dish: dish,
-      }));
-    }
-
     const menuWithRatings = await Promise.all(
       menuItems.map(async (item) => {
         const dishId = item.dish._id;
 
+        // Cumulative taste ratings (all history — never weekly-reset)
         const allRatings = await MealRating.find({ dish: dishId });
         const totalRatings = allRatings.length;
         const sum = allRatings.reduce((acc, curr) => acc + curr.rating, 0);
-        const avgRating = totalRatings > 0 ? parseFloat((sum / totalRatings).toFixed(1)) : 0;
+        const avgRating =
+          totalRatings > 0 ? parseFloat((sum / totalRatings).toFixed(1)) : 0;
 
         let userRating = 0;
         if (userId) {
@@ -127,9 +117,9 @@ export async function GET(req) {
 
     return NextResponse.json({
       success: true,
-      date: targetDate.toISOString().split('T')[0],
+      date: formatISODate(targetDate),
       dayOfWeek: dayOfWeekName,
-      weekStartDate: weekStartDate.toISOString().split('T')[0],
+      weekStartDate: formatISODate(weekStartDate),
       menu: menuWithRatings,
     });
   } catch (error) {
@@ -146,19 +136,16 @@ export async function POST(req) {
   try {
     await dbConnect();
 
-    const session = await getServerSession(authOptions);
-    if (!session) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized. Please login.' },
-        { status: 401 }
-      );
-    }
+    const { user, response } = await requireRoles(['STUDENT']);
+    if (response) return response;
+    const rateLimitError = await demoMutationResponse(user);
+    if (rateLimitError) return NextResponse.json(rateLimitError, { status: 429 });
 
-    const { dishId, rating, date } = await req.json();
+    const { dishId, rating } = await req.json();
 
-    if (!dishId || rating === undefined || !date) {
+    if (!dishId || rating === undefined) {
       return NextResponse.json(
-        { success: false, error: 'Missing dishId, rating, or date' },
+        { success: false, error: 'Missing dishId or rating' },
         { status: 400 }
       );
     }
@@ -171,36 +158,22 @@ export async function POST(req) {
       );
     }
 
-    const userId = session.user.id;
-
-    let user = await User.findById(userId);
-    if (!user && session.user.email) {
-      user = await User.findOne({ email: session.user.email });
-    }
-
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'User not found. Please sign out and sign back in.' },
-        { status: 404 }
-      );
-    }
-
-    const targetDate = new Date(date);
-    targetDate.setUTCHours(0, 0, 0, 0);
+    const targetDate = applicationDateStart(await getApplicationTime());
 
     await MealRating.findOneAndUpdate(
       { user: user._id, dish: dishId, date: targetDate },
       { rating: ratingVal },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
 
     const allRatings = await MealRating.find({ dish: dishId });
     const totalRatings = allRatings.length;
     const sum = allRatings.reduce((acc, curr) => acc + curr.rating, 0);
-    const avgRating = totalRatings > 0 ? parseFloat((sum / totalRatings).toFixed(1)) : 0;
+    const avgRating =
+      totalRatings > 0 ? parseFloat((sum / totalRatings).toFixed(1)) : 0;
 
     if (global.io) {
-      global.io.emit('rate-updated', {
+      global.io.to(socketEventRoom('rate-updated')).emit('rate-updated', {
         dishId,
         avgRating,
         totalRatings,

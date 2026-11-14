@@ -1,6 +1,6 @@
 'use client';
 
-import { useSession } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
 import { useState } from 'react';
 import { KeyRound, ShieldAlert, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'react-hot-toast';
@@ -10,7 +10,7 @@ import { toast } from 'react-hot-toast';
  * after first login or a warden password reset.
  */
 export default function ForcePasswordChange() {
-  const { data: session, status, update } = useSession();
+  const { data: session, status } = useSession();
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -25,8 +25,8 @@ export default function ForcePasswordChange() {
     e.preventDefault();
     setError('');
 
-    if (newPassword.trim().length < 6) {
-      setError('Password must be at least 6 characters long.');
+    if (newPassword.trim().length < 10) {
+      setError('Password must be at least 10 characters long.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -47,10 +47,10 @@ export default function ForcePasswordChange() {
         return;
       }
 
-      await update({ needsPasswordChange: false });
-      toast.success('Password updated! Welcome to MessMesh.');
+      toast.success('Password updated. Sign in again to continue.');
       setNewPassword('');
       setConfirmPassword('');
+      await signOut({ callbackUrl: '/login' });
     } catch (err) {
       console.error(err);
       setError('Something went wrong. Please try again.');
@@ -100,10 +100,10 @@ export default function ForcePasswordChange() {
               <input
                 type={showPassword ? 'text' : 'password'}
                 required
-                minLength={6}
+                minLength={10}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="At least 6 characters"
+                placeholder="At least 10 characters"
                 className="w-full rounded-xl border border-slate-800 bg-charcoal-dark py-3 pl-10 pr-11 text-sm text-white outline-none focus:border-emerald-primary focus:ring-2 focus:ring-emerald-primary/20"
                 autoFocus
               />
@@ -125,7 +125,7 @@ export default function ForcePasswordChange() {
             <input
               type={showPassword ? 'text' : 'password'}
               required
-              minLength={6}
+              minLength={10}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Re-enter new password"
